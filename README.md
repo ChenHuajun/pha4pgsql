@@ -558,5 +558,5 @@ pgsql-data-status的取值详细可参考下面的说明
 		slave recovery of node1 successed
 
 ## 参考
-[PgSQL Replicated Cluster](http://clusterlabs.org/wiki/PgSQL_Replicated_Cluster)
-[Pacemaker+Corosync搭建PostgreSQL集群](http://my.oschina.net/aven92/blog/518928)
+- [PgSQL Replicated Cluster](http://clusterlabs.org/wiki/PgSQL_Replicated_Cluster)
+- [Pacemaker+Corosync搭建PostgreSQL集群](http://my.oschina.net/aven92/blog/518928)
