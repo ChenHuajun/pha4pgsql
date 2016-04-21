@@ -1,0 +1,80 @@
+#!/bin/bash
+
+###########################################################
+#cls_reset_master
+#InPut:新Master节点名，缺省由Pacemaker根据xlog位置比较确定Master
+#OutPut:无
+#
+#return
+#0  正常
+#1  一般错误
+#10  不符合恢复master的条件（比如当前没有Master）
+#11  恢复master失败
+#100 输入参数错误
+#101 无法获取crm信息，比如pacemaker,corosync服务未启动(保留)
+#102 分区未达到法定票数或和任意一个另外的HA节点状态不一致(保留)
+###########################################################
+
+cd $(dirname "$0")
+. ../lib/common.sh
+
+nodename=`hostname`
+newmaster=$1
+
+pgsql_status
+if [ $? -ne 0 ]; then
+	echo "failed to execute \"pgsql_status\"">&2
+	return 1
+fi
+
+#Check if master is alive
+if [ -n "$MASTER_NODE" ]; then
+    echo "Current master exists, reset master is not allowed" >&2
+    exit 10
+fi
+
+./cls_stop
+
+# clear pgsql-data-status attribute from all node
+for node in `crm_node -l|awk '{print $2}'`
+do
+    crm_attribute -l forever -N ${node} -n "pgsql-data-status" -D
+done
+
+if [ -n "$newmaster" ]; then
+    crm_attribute --type crm_config --name pgsql_REPL_INFO -s pgsql_replication -V "$newmaster"
+else
+    crm_attribute --type crm_config --name pgsql_REPL_INFO -s pgsql_replication -D
+fi
+
+./cls_cleanup
+
+./cls_start
+
+#Check if master startup completed
+echo "wait for master startup complete"
+for i in {1..20}
+do
+    pgsql_status
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        exit 1
+    fi
+    
+    if [ -n "$MASTER_NODE" ]; then
+        break
+    fi
+    echo -n "."
+    sleep 1
+done
+
+echo
+
+if [ -z "$MASTER_NODE" ]; then
+    echo "failed to startup the new master"
+    exit 11
+fi
+
+echo "master reset and startup successed, the master is $MASTER_NODE"
+
+

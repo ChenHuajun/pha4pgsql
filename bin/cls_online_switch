@@ -1,0 +1,133 @@
+#!/bin/bash
+
+###########################################################
+#cls_online_switch
+#InPut:无
+#OutPut:无
+#
+#return
+#0  正常
+#1  一般错误
+#10  不符合主从切换条件（比如当前没有Master）
+#11  主从切换失败
+#100 输入参数错误
+#101 无法获取crm信息，比如pacemaker,corosync服务未启动(保留)
+#102 分区未达到法定票数或和任意一个另外的HA节点状态不一致(保留)
+###########################################################
+
+cd $(dirname "$0")
+. ../lib/common.sh
+
+#指定新的master可能导致切换后数据丢失，暂不支持
+#newmaster=$1
+
+pgsql_status
+
+#Check if all server is alive
+if [ -z "$MASTER_NODE" ]; then
+    echo "There is no master" >&2
+    exit 10
+fi
+
+for node in $node1 $node2 $node3 $readnodes
+do
+    dead_nodes=""
+    is_alive=0
+    for alive_node in $MASTER_NODE $SLAVE_NODES
+    do
+        if [ $node = $alive_node ];then
+            is_alive=1
+            break
+        fi
+    done
+    
+    if [ $is_alive -ne 1 ]; then
+        dead_nodes="$dead_nodes $node"
+    fi
+done
+
+if [ -n "$dead_nodes" ];then
+    echo "All nodes must alive, But there are dead nodes: $dead_nodes" >&2
+    exit 10
+fi
+
+#Check the new master hostname
+if [ -n "$newmaster" ]; then
+    if [ "$newmaster" = "$MASTER_NODE" ]; then
+        echo "$newmaster is the current master" >&2
+        exit 100
+    fi
+
+    #Check if the new master is a HA node
+    is_HA_node=0
+    for node in $node1 $node2 $node3 
+    do
+        if [ $node = "$newmaster" ]; then
+            is_HA_node=1
+            break
+        fi
+    done
+
+    if [ $is_HA_node -ne 1 ]; then
+        echo "the new master must be a HA node" >&2
+        exit 100
+    fi
+
+    #set the new master node's location score for Master role to "INFINITY"	
+	pcs resource clear msPostgresql 
+
+    pcs resource move msPostgresql $newmaster --master --wait
+    if [ $? -ne 0 ]; then
+		pcs resource clear msPostgresql  >/dev/null 2>&1
+        echo 'failed to execute "pcs resource move msPostgresql ..."' >&2
+        exit 1
+    fi
+else
+    #set the old master node's location score for Master role to "-INFINITY"
+	pcs resource clear msPostgresql 
+
+    pcs resource move msPostgresql --master --wait
+    if [ $? -ne 0 ]; then
+		pcs resource clear msPostgresql  >/dev/null 2>&1
+        echo 'failed to execute "pcs resource move msPostgresql ..."' >&2
+        exit 1
+    fi
+fi
+
+pcs resource clear msPostgresql
+
+# expgsql demote stop the postgres process, so it will raise a error from monitor,
+# so, it's needed to cleanup failcounts
+pcs resource cleanup msPostgresql >/dev/null 2>&1
+
+#Check if switch completed
+echo "wait for switch complete"
+OLD_MASTER_NODE="$MASTER_NODE"
+for i in {1..30}
+do
+    pgsql_status
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        exit $rc
+    fi
+    
+    if [ -n "$MASTER_NODE" -a "$MASTER_NODE" != "$OLD_MASTER_NODE" ]; then
+        break
+    fi
+    echo -n "."
+    sleep 1
+done
+
+echo
+
+if [ -z "$MASTER_NODE" -o "$MASTER_NODE" = "$OLD_MASTER_NODE" ]; then
+    echo "online switch timeout"
+    exit 11
+fi
+
+#wait for vip and other resource switch complete
+./cls_start
+
+echo "online switch successed,the new master is $MASTER_NODE"
+
+

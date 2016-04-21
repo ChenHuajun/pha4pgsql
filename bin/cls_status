@@ -1,0 +1,25 @@
+#!/bin/bash
+
+###########################################################
+#cls_status
+#InPut:无
+#OutPut:当前集群的状态(crm_mon -Afr1的输出)
+#
+#return
+#0  正常
+#1  错误
+#101 无法获取crm信息，比如pacemaker,corosync服务未启动(保留)
+#102 分区未达到法定票数或和任意一个另外的HA节点状态不一致(保留)
+###########################################################
+
+cd $(dirname "$0")
+. ../lib/common.sh
+
+crm_mon -Afr1
+
+repl_info=`crm_attribute --type crm_config --name pgsql_REPL_INFO -s pgsql_replication -G -q 2>/dev/null`
+echo
+echo "pgsql_REPL_INFO:$repl_info"
+
+
+

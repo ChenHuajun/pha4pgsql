@@ -1,0 +1,102 @@
+#!/bin/bash
+
+###########################################################
+#cls_rebuild_slave
+#InPut:无
+#OutPut:无
+#
+#return
+#0  正常
+#1  一般错误
+#10  不符合重建slave的前提条件（比如当前没有Master）
+#11  重建slave失败
+#100 输入参数错误
+#101 无法获取crm信息，比如pacemaker,corosync服务未启动(保留)
+#102 分区未达到法定票数或和任意一个另外的HA节点状态不一致(保留)
+###########################################################
+
+cd $(dirname "$0")
+. ../lib/common.sh
+
+nodename=`hostname`
+
+pgsql_status
+
+#Check if master is alive
+if [ -z "$MASTER_NODE" ]; then
+    echo "There is no master, can not recovery" >&2
+    exit 10
+fi
+
+if [ "$nodename" = "$MASTER_NODE" ]; then
+	echo "$nodename is the current master, recovery does not needed" >&2
+	exit 100
+fi
+
+data_status=`crm_attribute -l forever -N $nodename -n "pgsql-data-status" -Q -q 2>/dev/null`
+	
+if [ "$data_status" = "STREAMING|ASYNC" -o "$data_status" = "STREAMING|POTENTIAL" -o "$data_status" = "STREAMING|SYNC" -o "$data_status" = "LATEST" ]; then
+	echo "The current node is healthy, recovery does not needed" >&2
+	exit 100
+fi
+
+# if [ -d $pgsql_pgdata ]; then
+	# echo "The PostgreSQL data directory $pgsql_pgdata exists, you must remove it first!" >&2
+	# exit 100
+# fi
+
+# mkdir -p $pgsql_pgdata
+# chown postgres:postgres $pgsql_pgdata
+# chmod 700 $pgsql_pgdata
+# if [ $? -ne 0 ]; then
+	# echo "filed to create PostgreSQL data directory $pgsql_pgdata" >&2
+	# exit 1
+# fi
+
+# ./cls_standby_node $nodename
+# if [ $? -ne 0 ]; then
+	# echo "failed to call cls_standby_node $nodename" >&2
+	# exit 1
+# fi
+
+PG_BASEBACKUP=$(dirname "$pgsql_pgctl")/pg_basebackup
+
+su - postgres -c "PGPASSWORD=$pgsql_reppassord $PG_BASEBACKUP -h $writer_vip -U $pgsql_repuser -D $pgsql_pgdata -X stream -P"
+if [ $? -ne 0 ]; then
+	echo "failed to call \"$PG_BASEBACKUP -h $writer_vip -U $pgsql_repuser -D $pgsql_pgdata -X stream -P\"" >&2
+#	./cls_unstandby_node $nodename >/dev/null 2>/dev/null
+	exit 1
+fi
+
+#./cls_unstandby_node $nodename
+
+./cls_cleanup
+
+#Check if recovery completed
+echo "wait for recovery complete"
+OLD_MASTER_NODE="$MASTER_NODE"
+for i in {1..10}
+do
+    data_status=`crm_attribute -l forever -N $nodename -n "pgsql-data-status" -Q`
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        exit 1
+    fi
+    
+    if [ "$data_status" = "STREAMING|ASYNC" -o "$data_status" = "STREAMING|POTENTIAL" -o "$data_status" = "STREAMING|SYNC" ]; then
+        break
+    fi
+    echo -n "."
+    sleep 1
+done
+
+echo
+
+if [ "$data_status" != "STREAMING|ASYNC" -a "$data_status" != "STREAMING|POTENTIAL" -a "$data_status" != "STREAMING|SYNC" ]; then
+    echo "slave recovery of $nodename failed"
+    exit 11
+fi
+
+echo "slave recovery of $nodename successed"
+
+

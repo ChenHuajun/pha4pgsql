@@ -1,0 +1,47 @@
+#!/bin/bash
+
+###########################################################
+#cls_start
+#InPut:无
+#OutPut:无
+#
+#return
+#0  正常
+#1  错误
+#2  启动Slave失败
+#101 无法获取crm信息，比如pacemaker,corosync服务未启动(保留)
+#102 分区未达到法定票数或和任意一个另外的HA节点状态不一致(保留)
+###########################################################
+
+cd $(dirname "$0")
+. ../lib/common.sh
+
+pcs resource cleanup msPostgresql
+
+pcs resource enable msPostgresql --wait
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo "failed to execute \"pcs resource enable msPostgresql --wait\" rc=$rc" >&2
+    exit 1
+fi
+
+#Check if resource started normally
+check_with_timeout "check_resource_started msPostgresql vip-master" 5
+if [ $? -ne 0 ]; then
+    echo "start msPostgresql and vip-master timeout" >&2
+    exit 1
+fi
+
+check_with_timeout "check_resource_started vip-slave" 5
+if [ $? -ne 0 ]; then
+	echo "start vip-slave timeout" >&2
+	exit 2
+fi
+
+check_with_timeout "check_replication_ok" 20
+if [ $? -ne 0 ]; then
+	echo "start replication timeout" >&2
+	exit 2
+fi
+
+echo "start resource successful"

@@ -1,0 +1,144 @@
+#!/bin/sh
+
+usage() {
+    cat <<EOF
+Usage: $0 <psql_cmd> trylock|lock|unlock <lockpath(table:lockname)> <owner> [expired_time [timeout] ]
+Display 1 if successed, 0 if not. 
+
+Examples:
+
+trylock: Obtain a lock if available, and set the expired time to 10 seconds.
+	distlock 'psql -hlocalhost -Upostgres' trylock distlock:1 node1 10
+
+lock: Obtain a lock, and set the expired time to 10 seconds. The timeout is 15 seconds.
+	distlock 'psql -hlocalhost -Upostgres' lock distlock:1 node1 10 15
+	
+unlock: Release a lock.
+	distlock 'psql -hlocalhost -Upostgres' unlock distlock:1 node1
+
+EOF
+}
+
+check_with_timeout()
+{
+    func=$1
+    timeout=$2
+
+    start=`date +%s`
+    expire=`expr $timeout + $start`
+    
+    while true
+    do
+        output=`$func 2>&1`
+        if [ $? -eq 0 ]; then
+            if [ -n "$output" ];then
+                echo "Successful to call \"$func\" :$output"
+            fi
+            return 0
+        fi
+        
+        if [ `date +%s` -gt $expire ]; then
+            echo "Tried $timeout seconds and failed to call \"$func\" :$output"
+            return 1
+        fi
+        sleep 1
+    done
+}
+
+trylock() {
+	if [ -z "$expired_time" ]; then
+		usage
+		exit 1
+	fi
+
+	output=`echo $PSQL -tA -c \""update $table set owner='$owner',ts=now(),expired_time=interval '$expired_time second' where lockname='$lockname' and (owner = '$owner' or owner = '' or now() > ts + expired_time)"\" | sh`
+	if [ $? -ne 0 ];then
+		if [ -n "$output" ];then
+			echo "$output" >&2
+		fi
+		return 1
+	fi
+
+	echo "$output" | awk '{print $2}'
+}
+
+unlock() {
+    output=`echo $PSQL -tA -c \""update $table set owner='',ts=now(),expired_time=interval '-1 second' where lockname='$lockname' and owner='$owner'"\" | sh`
+	if [ $? -ne 0 ];then
+		if [ -n "$output" ];then
+			echo "$output" >&2
+		fi
+		return 1
+	fi
+
+	echo "$output" | awk '{print $2}'
+}
+
+lock() {
+	if [ -z "$expired_time" ]; then
+		usage
+		exit 1
+	fi
+	
+	if [ -z "$timeout" ]; then
+		timeout=2147483647
+	fi
+	
+	start=`date +%s`
+    expire=`expr $timeout + $start`
+    
+    while true
+    do
+        output=`trylock`
+		if [ $? -ne 0 ]; then
+            if [ -n "$output" ];then
+                echo "$output" >&2
+            fi
+            return 1
+		fi
+		
+        if [ "$output" = "1" ]; then
+            echo "$output"
+            return 0
+        fi
+        
+        if [ `date +%s` -gt $expire ]; then
+            echo "$output"
+            return 0
+        fi
+        sleep 1
+    done
+
+}
+
+if [ $# -lt 4 ]; then
+    usage
+    exit 1
+fi
+
+psql_cmd=$1
+operate=$2
+lockpath=$3
+table=${lockpath%%:*}
+lockname=${lockpath#*:}
+owner=$4
+expired_time=$5
+timeout="$6"
+
+PSQL="$psql_cmd"
+
+if [ -z "$table" -o -z "$lockname" -o -z "$owner" ]; then
+    usage
+    exit 1
+fi
+
+case "$operate" in
+    trylock)    trylock
+                exit $?;;
+    lock)       lock
+                exit $?;;
+	unlock)     unlock
+                exit $?;;
+	*)          usage
+                exit 1;;
+esac

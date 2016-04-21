@@ -1,0 +1,31 @@
+#!/bin/bash
+
+###########################################################
+#cls_unstandby
+#InPut:准备上线的节点名
+#OutPut:无
+#
+#return
+#0  正常
+#1  错误
+#101 无法获取crm信息，比如pacemaker,corosync服务未启动(保留)
+#102 分区未达到法定票数或和任意一个另外的HA节点状态不一致(保留)
+###########################################################
+
+cd $(dirname "$0")
+. ../lib/common.sh
+
+if [ $# -lt 1 ]; then
+  echo "Usage: cls_unstandby <nodename>" >&2
+  exit 1
+fi
+
+nodename="$1"
+
+pcs cluster unstandby "$nodename"
+if [ $? -ne 0 ]; then
+    echo "failed to execute \"pcs cluster unstandby $nodename\"" >&2
+    exit 1
+fi
+
+
