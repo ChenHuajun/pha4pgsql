@@ -65,8 +65,8 @@ promote和monitor的同步复制切换为异步复制前都需要先获取锁，
    显示集群状态
 6. cls_cleanup   
    清除资源状态和failcount。在某个节点上资源失败次数(failcount)超过3次Pacemaker将不再分配该资源到此节点，人工修复故障后需要调用cleanup让Pacemkaer重新尝试启动资源。
-7. cls_recovery_master   
-   清除pgsql_REPL_INFO和每个节点的pgsql-data-status，让Pacemaker重新在所有节点中选出xlog位置最新的节点作为Master。仅用于集群中没有任何节点满足Master条件情况下的紧急修复。
+7. cls_reset_master [master]
+   设置pgsql_REPL_INFO使指定的节点成为Master；如未指定Master，则清除pgsql_REPL_INFO让Pacemaker重新在所有节点中选出xlog位置最新的节点作为Master。仅用于集群中没有任何节点满足Master条件情况下的紧急修复。
 8. cls_repair_slave   
    通过pg_rewind修复当前节点，主要用于旧Master的修复，回退超出时间线分叉的那部分更新，并和新Master建立复制关系。
 9. cls_rebuild_slave   
