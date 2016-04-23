@@ -33,22 +33,20 @@ promote和monitor的同步复制切换为异步复制前都需要先获取锁，
 
 2. 根据Master是否发生变更动态采取restart或pg_ctl promote的方式提升Slave为Master。    
 	当Master发生变更时采用pg_ctl promote的方式提升Slave为Master；未发生变更时采用restart的方式提升。
-	相应地废弃原pgsql RA的restart_on_promote参数
+	相应地废弃原pgsql RA的restart_on_promote参数。
 
 3. 记录PostgreSQL上次时间线切换前的时间线和xlog位置信息    
-	这些信息记录在集群配置变量pgsql_REPL_INFO中。
-	
-	pgsql_REPL_INFO的值由以下3个部分组成,通过‘|’连接在一起。
+	这些信息记录在集群配置变量pgsql_REPL_INFO中。pgsql_REPL_INFO的值由以下3个部分组成,通过‘|’连接在一起。
 	
 	- Master节点名
 	- pg_ctl promote前的时间线
 	- pg_ctl promote前的时间线的结束位置
 	
-	RA启动时，会检查当前节点和pgsql_REPL_INFO中记录的状态是否有冲突，如有报错。
+	RA启动时，会检查当前节点和pgsql_REPL_INFO中记录的状态是否有冲突，如有报错不允许资源启动。
 	因为有这个检查废弃原pgsql RA的PGSQL.lock锁文件。
 
 4. 资源启动时通过pgsql_REPL_INFO中记录的Master节点名，继续沿用原Master。   
-通过这种方式加速集群的启动，并避免不必要的主从切换。集群仅在初始启动pgsql_REPL_INFO的值为空时，在通过xlog比较确定哪个节点作为Master。
+   通过这种方式加速集群的启动，并避免不必要的主从切换。集群仅在初始启动pgsql_REPL_INFO的值为空时，才通过xlog比较确定哪个节点作为Master。
 
 关于pgsql RA的原始功能请参考：[PgSQL Replicated Cluster](http://clusterlabs.org/wiki/PgSQL_Replicated_Cluster)
 
@@ -65,19 +63,19 @@ promote和monitor的同步复制切换为异步复制前都需要先获取锁，
    显示集群状态
 6. cls_cleanup   
    清除资源状态和failcount。在某个节点上资源失败次数(failcount)超过3次Pacemaker将不再分配该资源到此节点，人工修复故障后需要调用cleanup让Pacemkaer重新尝试启动资源。
-7. cls_reset_master [master]
+7. cls_reset_master [master]   
    设置pgsql_REPL_INFO使指定的节点成为Master；如未指定Master，则清除pgsql_REPL_INFO让Pacemaker重新在所有节点中选出xlog位置最新的节点作为Master。仅用于集群中没有任何节点满足Master条件情况下的紧急修复。
 8. cls_repair_slave   
-   通过pg_rewind修复当前节点，主要用于旧Master的修复，回退超出时间线分叉的那部分更新，并和新Master建立复制关系。
+   通过pg_rewind修复当前节点，主要用于旧Master的修复，回退超出时间线分叉点的那部分更新，并和新Master建立复制关系。pg_rewind仅在PostgreSQL 9.5以上版本提供
 9. cls_rebuild_slave   
-   通过pg_basebackup在当前节点重建Slave。执行该命令前需要停止当前节点上的PostgreSQL进程并删除旧的数据目录。
+   通过pg_basebackup在当前节点重建Slave。执行该命令前需要停止当前节点上的PostgreSQL进程并清空旧的数据目录。
 10. cls_unmanage   
-   unmanage所有资源脱离Pacemaker的控制。当需要重启Pacemaker和Corosync又不能停止PostgreSQL服务时，可以先调用这个命令，Pacemaker和Corosync重启完成后再用cls_manage恢复管理。
+   unmanage所有资源使其脱离Pacemaker的控制。当需要重启Pacemaker和Corosync又不能停止PostgreSQL服务时，可以先调用这个命令，Pacemaker和Corosync重启完成后再用cls_manage恢复管理。
 11. cls_manage   
    恢复cls_unmanage产生的资源unmanaged状态。
-12. cls_standby_node <nodename>   
+12. cls_standby_node [nodename]   
    释放某节点上所有资源。可用于特定节点的维护，比如升级。
-13. cls_unstandby_node <nodename>   
+13. cls_unstandby_node [nodename]   
    恢复cls_standby_node产生的节点standby状态。
 
 
@@ -206,9 +204,9 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
 6. 创建复制用户
 
-		createuser --login --replication -s replication -P
+		createuser --login --replication replication -P
 
-注：9.5以上版本如需要支持pg_rewind，加上“-s”选项。
+注：9.5以上版本如需要支持pg_rewind，需加上“-s”选项。
 
 #### 创建备数据库
 在node2节点执行：
