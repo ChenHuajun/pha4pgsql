@@ -862,7 +862,7 @@ pgsql_real_stop() {
 
     # Stop PostgreSQL, do not wait for clients to disconnect
     if [ $stop_escalate -gt 0 ]; then
-            runasowner "$OCF_RESKEY_pgctl -D $OCF_RESKEY_pgdata stop -m fast -W"
+            runasowner "$OCF_RESKEY_pgctl -W -D $OCF_RESKEY_pgdata stop -m fast"
     fi
 
     # stop waiting
@@ -882,7 +882,7 @@ pgsql_real_stop() {
     then
         #PostgreSQL is still up. Use another shutdown mode.
         ocf_log info "PostgreSQL failed to stop after ${stop_escalate}s using -m fast. Trying -m immediate..."
-        runasowner "$OCF_RESKEY_pgctl -D $OCF_RESKEY_pgdata stop -m immediate -W"
+        runasowner "$OCF_RESKEY_pgctl -W -D $OCF_RESKEY_pgdata stop -m immediate"
     fi
 
     while :
@@ -1549,7 +1549,7 @@ check_timeline_and_xlog_loc() {
     
     if [ "$tli" -eq  `expr $repl_info_tli + 1` ]; then
         return 0
-    elif [ "$tli" -le  "$repl_info_tli" ]; then    
+    elif [ "$tli" -eq  "$repl_info_tli" ]; then    
         output1=`echo "$checkpoint_loc" | cut -d "/" -f 1`
         output2=`echo "$checkpoint_loc" | cut -d "/" -f 2`
         log1=`printf "%08s\n" $output1 | sed "s/ /0/g"`
@@ -1557,7 +1557,7 @@ check_timeline_and_xlog_loc() {
         checkpoint_loc="${log1}${log2}"
             
         newerXlog=`printf "$checkpoint_loc\n$repl_info_xlog_loc\n" | sort -r| head -1`
-        if [ "$newerXlog" = "$repl_info_xlog_loc" ]; then
+        if [ "$newerXlog" = "$checkpoint_loc" ]; then
             ocf_exit_reason "The master's timeline forked off current database system timeline $tli before latest checkpoint location $checkpoint_loc, REPL_INFO is ${repl_info}."
             return 1
         else
