@@ -2,53 +2,38 @@
 # Pacemaker High Availability for PostgreSQL
 
 ## 简介
-原生的基于Pacemaker搭建PostgreSQL HA集群存在设置参数众多，不易使用的问题。本项目在Resource Agent 3.9.7的pgsql RA的基础上进行了增强，并封装了常用的集群操作命令。目的在于简化PostgreSQL流复制HA的部署和使用，并且尽可能确保failover后的数据不丢失。
+在众多的PostgreSQL HA方案中，流复制HA方案是性能，可靠性，部署成本等方面都比较好的，也是目前被普遍采用的方案。而用于管理流复制集群的工具中，Pacemaker+Corosync又是比较成熟可靠的。
+
+但是原生的基于Pacemaker+Corosync搭建PostgreSQL流复制HA集群存在配置复杂，设置参数众多，不易使用的问题，尤其对于缺少Pacemaker使用经验的用户。本项目在Pacemaker+Corosync PostgreSQL流复制HA集群方案的基础上简化了集群配置并封装了常用的集群操作命令，目的在于简化集群的部署和使用。同时对Resource Agent 3.9.7的pgsql RA进行了增强，引入分布式锁服务，防止双节点集群出现脑裂，并确保同步复制下failover后数据不丢失。
 
 
 ## 功能特性
 1. 秒级故障转移
-2. 支持同步复制和异步复制
-3. 同步复制下failover零数据丢失
-4. 支持双机集群和多机集群
-5. 初始启动时自动比较数据新旧确定主备关系
-6. 基于VIP的读写分离
+2. 支持双节点集群和多节点集群
+3. 支持同步复制和异步复制
+4. 同步复制下failover零数据丢失
+5. 提供读写VIP和只读VIP，集群的拓扑结构对应用透明
 
+## 基本架构和原理
+1. Pacemaker + Corosync作为集群基础软件，Corosync负责集群通信和成员关系管理，Pacemaker负责资源管理。
+2. 集群用到资源包括PostgreSQL和VIP等，PostgreSQL对应的Resource Agent(RA)为expgsql，expgsql负责实施PostgreSQL的起停，监视，failover等操作。
+3. 集群初始启动时expgsql通过比较所有节点的xlog位置，找出xlog最新的节点作为Master，其它节点作为Slave通过读写VIP连接到Master上进行WAL复制。
+4. 集群启动后expgsql不断监视PostgreSQL的健康状况，当expgsql发现PostgreSQL资源故障时报告给Pacemaker，由Pacemaker实施相应动作。
+   - 如果是PostgreSQL进程故障，原地重启PostgreSQL，并且该节点上的fail-count加1。
+   - fail-count累加到3时不再分配PostgreSQL资源到这个节点。如果该节点为Master，会提升一个Slave为Master，即发起failover。
+5. Corosync发现节点故障(主机或网络故障)时，Pacemaker也根据情况实施相应动作。
+   - 对多节点集群，未包含过半节点成员的分区将主动释放本分区内的所有资源，包括PostgreSQL和VIP。
+   - 合法的分区中如果没有Master，Pacemaker会提升一个Slave为Master，即发起failover。
+6. Master上的expgsql会不断监视Slave的复制健康状况，同步复制下会选定一个Slave作为同步Slave。
+7. 当同步Slave出现故障时，Master上的expgsql会临时将同步复制切换到异步复制，防止Master上的写操作被hang住。如果故障Slave恢复或存在另一个健康的Slave，再切换到同步复制。
+8. 为防止集群分区后，Slave升级为新Master而旧Master切换到异步复制导致脑裂和数据双写，引入分布式锁服务进行仲裁。Slave升级为新Master和旧Master切换到异步复制前必须先取得锁，避免这两件事同时发生。失去锁的Master会主动停止PostgreSQL进程，防止出现双主。
+9. 如果分布锁服务发生故障而所有PostgreSQL节点都是健康的，expgsql会忽视锁服务，即不影响集群服务。但在分布锁服务故障期间，Master发生节点故障(注意区分节点故障和资源故障)，集群将无法正常failover。
+10. 同步复制下只有同步Slave才有资格成为候选Master，加上有分布式锁的防护，可以确保failover后数据不丢失。
+11. 集群初始启动和每次failover时通过pg_ctl promote提升Slave为Master并使时间线加1，同时记录Master节点名，时间线和切换时的xlog位置到集群CIB。
+12. 集群重启时根据集群CIB中记录的信息确定Master节点，并保持时间线不变。
+13. expgsql启动PostgreSQL前会检查该节点的时间线和xlog，如果和集群CIB中记录的信息有冲突，将报错。需要人工通过cls_repair_slave(pg_rewind)等手段修复。
+14. 读写VIP和Master节点绑定，只读VIP和其中一个Slave绑定，应用只需访问VIP，无需关心具体访问哪个节点。
 
-## 对pgsql RA的修改
-本项目使用的expgsql RA是在Resource Agent 3.9.7中的pgsql RA的基础上做的修改。修改内容如下：
-
-1. 引入分布式锁服务防止双节点集群出现脑裂，并防止在failover过程中丢失数据。   
-promote和monitor的同步复制切换为异步复制前都需要先获取锁，因此确保这两件事不能同时发生，也就防止了在同步复制模式下failover出现数据丢失。相应的引入以下参数：
-
-	- enable_distlock   
-	    是否启动分布式锁仲裁，对双节集群建议启用。
-	- distlock_lock_cmd   
-	    分布式锁服务的加锁命令
-	- distlock_unlock_cmd   
-	    分布式锁服务的解锁命令
-	- distlock_lockservice_deadcheck_nodelist   
-		无法访问分布式锁服务时，需要做二次检查的节点列表，通过ssh连接到这些节点后再获取锁。如果节点列表中所有节点都无法访问分布式锁服务，认为分布式锁服务失效，按已获得锁处理。如果节点列表中任何一个节点本身无法访问，按未获得锁处理。
-
-    并且内置了一个基于PostgreSQL的分布式锁实现，即tools\distlock。
-
-2. 根据Master是否发生变更动态采取restart或pg_ctl promote的方式提升Slave为Master。    
-	当Master发生变更时采用pg_ctl promote的方式提升Slave为Master；未发生变更时采用restart的方式提升。
-	相应地废弃原pgsql RA的restart_on_promote参数。
-
-3. 记录PostgreSQL上次时间线切换前的时间线和xlog位置信息    
-	这些信息记录在集群配置变量pgsql_REPL_INFO中。pgsql_REPL_INFO的值由以下3个部分组成,通过‘|’连接在一起。
-	
-	- Master节点名
-	- pg_ctl promote前的时间线
-	- pg_ctl promote前的时间线的结束位置
-	
-	RA启动时，会检查当前节点和pgsql_REPL_INFO中记录的状态是否有冲突，如有报错不允许资源启动。
-	因为有这个检查废弃原pgsql RA的PGSQL.lock锁文件。
-
-4. 资源启动时通过pgsql_REPL_INFO中记录的Master节点名，继续沿用原Master。   
-   通过这种方式加速集群的启动，并避免不必要的主从切换。集群仅在初始启动pgsql_REPL_INFO的值为空时，才通过xlog比较确定哪个节点作为Master。
-
-关于pgsql RA的原始功能请参考：[PgSQL Replicated Cluster](http://clusterlabs.org/wiki/PgSQL_Replicated_Cluster)
 
 ## 集群操作命令一览
 1. cls_start  
@@ -62,7 +47,7 @@ promote和monitor的同步复制切换为异步复制前都需要先获取锁，
 5. cls_status   
    显示集群状态
 6. cls_cleanup   
-   清除资源状态和failcount。在某个节点上资源失败次数(failcount)超过3次Pacemaker将不再分配该资源到此节点，人工修复故障后需要调用cleanup让Pacemkaer重新尝试启动资源。
+   清除资源状态和fail-count。在某个节点上资源失败次数(fail-count)超过3次Pacemaker将不再分配该资源到此节点，人工修复故障后需要调用cleanup让Pacemkaer重新尝试启动资源。
 7. cls_reset_master [master]   
    设置pgsql_REPL_INFO使指定的节点成为Master；如未指定Master，则清除pgsql_REPL_INFO让Pacemaker重新在所有节点中选出xlog位置最新的节点作为Master。仅用于集群中没有任何节点满足Master条件情况下的紧急修复。
 8. cls_repair_slave   
@@ -189,7 +174,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		restart_after_crash = off
 		hot_standby_feedback = on
 
-注：PostgreSQL 9.3以上版本，应将replication_timeout替换成wal_sender_timeout；PostgreSQL 9.5以上版本，可加上"wal_log_hints = on"，使得可以使用pg_rewind修复旧Master。
+    注：PostgreSQL 9.3以上版本，应将replication_timeout替换成wal_sender_timeout；PostgreSQL 9.5以上版本，可加上"wal_log_hints = on"，使得可以使用pg_rewind修复旧Master。
 
 
 4. 修改pg_hba.conf
@@ -206,7 +191,9 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
 		createuser --login --replication replication -P
 
-注：9.5以上版本如需要支持pg_rewind，需加上“-s”选项。
+    9.5以上版本如需要支持pg_rewind，需加上“-s”选项。
+
+		createuser --login --replication replication -P -s
 
 #### 创建备数据库
 在node2节点执行：
@@ -286,14 +273,14 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		pgsql_distlock_psql_cmd='/usr/bin/psql \\"host=node3 port=5439 dbname=postgres user=postgres connect_timeout=5\\"'
 		pgsql_distlock_lockname=pgsql_cls1
 
-需要根据实际环境修改上面的参数。当多个多个集群使用锁服务时，确保每个集群的pgsql_distlock_lockname值必须是唯一的。
+    需要根据实际环境修改上面的参数。当多个多个集群使用锁服务时，确保每个集群的pgsql_distlock_lockname值必须是唯一的。
 
 3. 安装pha4pgsql
 
 		sh install.sh
 		./setup.sh
 
-   注意，安装过程只需在一个节点上执行即可。
+    注意，安装过程只需在一个节点上执行即可。
 
 4. 设置环境变量
 
@@ -307,7 +294,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
        
         cls_status
 
-   cls_status的输出示例如下：
+    cls_status的输出示例如下：
 
 		[root@node1 pha4pgsql]# cls_status
 		Last updated: Fri Apr 22 02:01:01 2016
@@ -350,20 +337,20 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		
 		pgsql_REPL_INFO:node1|1|00000000070000D0
 
-检查集群的健康状态。完全健康的集群需要满足以下条件：
-
-1. msPostgresql在每个节点上都已启动
-2. 在其中一个节点上msPostgresql处于Master状态，其它的为Salve状态
-3. Salve节点的data-status值是以下中的一个   
-	- STREAMING|SYNC   
-	   同步复制Slave
-	- STREAMING|POTENTIAL   
-	   候选同步复制Slave
-	- STREAMING|ASYNC   
-	   异步复制Slave
-
-
-pgsql-data-status的取值详细可参考下面的说明
+	检查集群的健康状态。完全健康的集群需要满足以下条件：
+	
+	1. msPostgresql在每个节点上都已启动
+	2. 在其中一个节点上msPostgresql处于Master状态，其它的为Salve状态
+	3. Salve节点的data-status值是以下中的一个   
+		- STREAMING|SYNC   
+		   同步复制Slave
+		- STREAMING|POTENTIAL   
+		   候选同步复制Slave
+		- STREAMING|ASYNC   
+		   异步复制Slave
+	
+	
+	pgsql-data-status的取值详细可参考下面的说明
 
 		The transitional state of data is displayed. This state remains after stopping pacemaker. When starting pacemaker next time, this state is used to judge whether my data is old or not.
 		DISCONNECT
@@ -379,12 +366,14 @@ pgsql-data-status的取值详细可参考下面的说明
 
 ## 故障测试
 
+### Master上的postgres进程故障
+
 1. 强制杀死Master上的postgres进程
 
 		[root@node1 pha4pgsql]# killall postgres
 
-2. 检查集群状态
-由于设置了migration-threshold="3"，发生一次普通的错误，Pacemaker会在原地重新启动postgres进程，不发生主从切换。
+2. 检查集群状态   
+    由于设置了migration-threshold="3"，发生一次普通的错误，Pacemaker会在原地重新启动postgres进程，不发生主从切换。
 （如果Master的物理机或网络发生故障，直接进行failover。）
 
 		[root@node1 pha4pgsql]# cls_status
@@ -434,8 +423,8 @@ pgsql-data-status的取值详细可参考下面的说明
 		pgsql_REPL_INFO:node1|1|00000000070000D0
 
 
-3. 再强制杀死Master上的postgres进程2次后检查集群状态。
-这时已经发生了failover，产生了新的Master，并提升了时间线。
+3. 再强制杀死Master上的postgres进程2次后检查集群状态。   
+    这时已经发生了failover，产生了新的Master，并提升了时间线。
 
 		[root@node1 pha4pgsql]# cls_status
 		Last updated: Fri Apr 22 02:07:33 2016
@@ -484,8 +473,8 @@ pgsql-data-status的取值详细可参考下面的说明
 		pgsql_REPL_INFO:node2|2|0000000007000410
 
 
-4. 修复旧Master
-通过pg_baseback修复旧Master
+4. 修复旧Master    
+    通过pg_baseback修复旧Master
 
 		[root@node1 pha4pgsql]# rm -rf /data/postgresql/data/*
 		[root@node1 pha4pgsql]# cls_rebuild_slave 
@@ -536,7 +525,7 @@ pgsql-data-status的取值详细可参考下面的说明
 		pgsql_REPL_INFO:node2|2|0000000007000410 
 
 
-9.5以上版本还可以通过pg_rewind修复旧Master
+     9.5以上版本还可以通过pg_rewind修复旧Master
 
 		[root@node1 pha4pgsql]# cls_repair_slave 
 		connected to server
@@ -555,6 +544,415 @@ pgsql-data-status的取值详细可参考下面的说明
 		....
 		slave recovery of node1 successed
 
-## 参考
+
+### Master网络故障
+
+1. 故障前的集群状态
+
+    故障前的Master是node1
+
+		[root@node1 pha4pgsql]# cls_status
+		Last updated: Fri Apr 22 11:28:26 2016
+		Last change: Fri Apr 22 11:25:56 2016 by root via crm_resource on node1
+		Stack: corosync
+		Current DC: node2 (2) - partition with quorum
+		Version: 1.1.12-a14efad
+		2 Nodes configured
+		4 Resources configured
+		
+		
+		Online: [ node1 node2 ]
+		
+		Full list of resources:
+		
+		 vip-master	(ocf::heartbeat:IPaddr2):	Started node1 
+		 vip-slave	(ocf::heartbeat:IPaddr2):	Started node2 
+		 Master/Slave Set: msPostgresql [pgsql]
+		     Masters: [ node1 ]
+		     Slaves: [ node2 ]
+		
+		Node Attributes:
+		* Node node1:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: 1000      
+		    + pgsql-data-status               	: LATEST    
+		    + pgsql-master-baseline           	: 0000000009044898
+		    + pgsql-status                    	: PRI       
+		* Node node2:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: 100       
+		    + pgsql-data-status               	: STREAMING|SYNC
+		    + pgsql-status                    	: HS:sync   
+		
+		Migration summary:
+		* Node node2: 
+		* Node node1: 
+		
+		pgsql_REPL_INFO:node1|12|0000000009044898
+
+2. 阻断Master和其它节点的通信
+
+		[root@node1 pha4pgsql]# iptables -A INPUT -j DROP -s node2
+		[root@node1 pha4pgsql]# iptables -A OUTPUT -j DROP -d node2
+		[root@node1 pha4pgsql]# iptables -A INPUT -j DROP -s node3
+		[root@node1 pha4pgsql]# iptables -A OUTPUT -j DROP -d node3
+
+3. 等10几秒后检查集群状态
+
+    在node1(旧Master)上查看，由于失去分布式锁，node1已经停止了部署在自身上面的所有资源。
+
+		[root@node1 pha4pgsql]# cls_status
+		Last updated: Fri Apr 22 11:34:46 2016
+		Last change: Fri Apr 22 11:25:56 2016 by root via crm_resource on node1
+		Stack: corosync
+		Current DC: node1 (1) - partition with quorum
+		Version: 1.1.12-a14efad
+		2 Nodes configured
+		4 Resources configured
+		
+		
+		Online: [ node1 ]
+		OFFLINE: [ node2 ]
+		
+		Full list of resources:
+		
+		 vip-master	(ocf::heartbeat:IPaddr2):	Stopped 
+		 vip-slave	(ocf::heartbeat:IPaddr2):	Stopped 
+		 Master/Slave Set: msPostgresql [pgsql]
+		     Stopped: [ node1 node2 ]
+		
+		Node Attributes:
+		* Node node1:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: -INFINITY 
+		    + pgsql-data-status               	: LATEST    
+		    + pgsql-status                    	: STOP      
+		
+		Migration summary:
+		* Node node1: 
+		   pgsql: migration-threshold=3 fail-count=2 last-failure='Fri Apr 22 11:34:23 2016'
+		
+		Failed actions:
+		    pgsql_promote_0 on node1 'unknown error' (1): call=990, status=complete, exit-reason='none', last-rc-change='Fri Apr 22 11:34:15 2016', queued=0ms, exec=7756ms
+		
+		
+		pgsql_REPL_INFO:node1|12|0000000009044898
+
+
+    在node2上查看，发现node2已经被提升为新Master，PostgreSQL的时间线也从12增长到了13。
+
+		[root@node2 ~]# cls_status
+		Last updated: Sun May  8 01:02:04 2016
+		Last change: Sun May  8 00:57:47 2016 by root via crm_resource on node1
+		Stack: corosync
+		Current DC: node2 (2) - partition with quorum
+		Version: 1.1.12-a14efad
+		2 Nodes configured
+		4 Resources configured
+		
+		
+		Online: [ node2 ]
+		OFFLINE: [ node1 ]
+		
+		Full list of resources:
+		
+		 vip-master	(ocf::heartbeat:IPaddr2):	Started node2 
+		 vip-slave	(ocf::heartbeat:IPaddr2):	Stopped 
+		 Master/Slave Set: msPostgresql [pgsql]
+		     Masters: [ node2 ]
+		     Stopped: [ node1 ]
+		
+		Node Attributes:
+		* Node node2:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: 1000      
+		    + pgsql-data-status               	: LATEST    
+		    + pgsql-master-baseline           	: 0000000009045828
+		    + pgsql-status                    	: PRI       
+		
+		Migration summary:
+		* Node node2: 
+		
+		pgsql_REPL_INFO:node2|13|0000000009045828
+
+    请注意，这时发生了网络分区，node1和node2各自保存的集群状态是不同的。
+
+4. 恢复node1上的网络
+
+		[root@node1 pha4pgsql]# iptables -F
+
+5. 再次在node1上检查集群状态    
+    再次在node1上检查集群状态，发现node1和node2两个分区合并后，集群采纳了node2的配置而不是node1，这正是我们想要的（由于node2上的集群配置的版本更高，所以采纳node2而不是node1的配置)。同时，Pacemaker试图重新启动node1上的PostgreSQL进程时，发现它的最近一次checkpoint位置大于等于上次时间线提升的位置，不能作为Slave连到新Master上所以报错并阻止它上线。
+
+		[root@node1 pha4pgsql]# cls_status
+		Last updated: Fri Apr 22 11:49:44 2016
+		Last change: Sun May  8 00:57:47 2016 by root via crm_resource on node1
+		Stack: corosync
+		Current DC: node2 (2) - partition with quorum
+		Version: 1.1.12-a14efad
+		2 Nodes configured
+		4 Resources configured
+		
+		
+		Online: [ node1 node2 ]
+		
+		Full list of resources:
+		
+		 vip-master	(ocf::heartbeat:IPaddr2):	Started node2 
+		 vip-slave	(ocf::heartbeat:IPaddr2):	Started node1 
+		 Master/Slave Set: msPostgresql [pgsql]
+		     Masters: [ node2 ]
+		     Stopped: [ node1 ]
+		
+		Node Attributes:
+		* Node node1:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: -INFINITY 
+		    + pgsql-data-status               	: DISCONNECT
+		    + pgsql-status                    	: STOP      
+		* Node node2:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: 1000      
+		    + pgsql-data-status               	: LATEST    
+		    + pgsql-master-baseline           	: 0000000009045828
+		    + pgsql-status                    	: PRI       
+		
+		Migration summary:
+		* Node node2: 
+		* Node node1: 
+		   pgsql: migration-threshold=3 fail-count=1000000 last-failure='Sun May  8 01:12:57 2016'
+		
+		Failed actions:
+		    pgsql_start_0 on node1 'unknown error' (1): call=1022, status=complete, exit-reason='The master's timeline forked off current database system timeline 13 before latest checkpoint location 0000000009045828, REPL_IN', last-rc-change='Fri Apr 22 11:49:35 2016', queued=0ms, exec=2123ms
+		
+		
+		pgsql_REPL_INFO:node2|13|0000000009045828
+
+
+6. 修复node1(旧Master)
+ 
+    修复node1(旧Master)的方法和前面一样，使用cls_repair_slave或cls_rebuild_slave。
+
+		[root@node1 pha4pgsql]# cls_repair_slave 
+		connected to server
+		servers diverged at WAL position 0/9045828 on timeline 13
+		rewinding from last common checkpoint at 0/9045780 on timeline 13
+		reading source file list
+		reading target file list
+		reading WAL in target
+		need to copy 211 MB (total source directory size is 229 MB)
+		216927/216927 kB (100%) copied
+		creating backup label and updating control file
+		syncing target data directory
+		Done!
+		All resources/stonith devices successfully cleaned up
+		wait for recovery complete
+		..........
+		slave recovery of node1 successed
+
+### Slave上的PostgreSQL进程故障
+1. 强制杀死Slave上的postgres进程
+
+		[root@node2 pha4pgsql]# killall postgres
+
+2. 检查集群状态   
+    由于设置了migration-threshold="3"，发生一次普通的错误，Pacemaker会在原地重新启动postgres进程。
+
+		[root@node2 ~]# cls_status
+		Last updated: Sun May  8 01:34:36 2016
+		Last change: Sun May  8 01:33:01 2016 by root via crm_resource on node1
+		Stack: corosync
+		Current DC: node2 (2) - partition with quorum
+		Version: 1.1.12-a14efad
+		2 Nodes configured
+		4 Resources configured
+		
+		
+		Online: [ node1 node2 ]
+		
+		Full list of resources:
+		
+		 vip-master	(ocf::heartbeat:IPaddr2):	Started node1 
+		 vip-slave	(ocf::heartbeat:IPaddr2):	Started node2 
+		 Master/Slave Set: msPostgresql [pgsql]
+		     Masters: [ node1 ]
+		     Slaves: [ node2 ]
+		
+		Node Attributes:
+		* Node node1:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: 1000      
+		    + pgsql-data-status               	: LATEST    
+		    + pgsql-master-baseline           	: 00000000090650F8
+		    + pgsql-status                    	: PRI       
+		* Node node2:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: 100       
+		    + pgsql-data-status               	: STREAMING|SYNC
+		    + pgsql-status                    	: HS:sync   
+		
+		Migration summary:
+		* Node node2: 
+		   pgsql: migration-threshold=3 fail-count=1 last-failure='Sun May  8 01:32:44 2016'
+		* Node node1: 
+		
+		Failed actions:
+		    pgsql_monitor_4000 on node2 'not running' (7): call=227, status=complete, exit-reason='none', last-rc-change='Sun May  8 01:32:44 2016', queued=0ms, exec=0ms
+		
+		
+		pgsql_REPL_INFO:node1|14|00000000090650F8
+
+3. 再强制杀死Master上的postgres进程2次后检查集群状态。
+
+    fail-count增加到3后，Pacemaker不再启动PostgreSQL，保持其为停止状态。
+
+		[root@node2 ~]# cls_status
+		Last updated: Sun May  8 01:36:16 2016
+		Last change: Sun May  8 01:36:07 2016 by root via crm_resource on node1
+		Stack: corosync
+		Current DC: node2 (2) - partition with quorum
+		Version: 1.1.12-a14efad
+		2 Nodes configured
+		4 Resources configured
+		
+		
+		Online: [ node1 node2 ]
+		
+		Full list of resources:
+		
+		 vip-master	(ocf::heartbeat:IPaddr2):	Started node1 
+		 vip-slave	(ocf::heartbeat:IPaddr2):	Stopped 
+		 Master/Slave Set: msPostgresql [pgsql]
+		     Masters: [ node1 ]
+		     Stopped: [ node2 ]
+		
+		Node Attributes:
+		* Node node1:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: 1000      
+		    + pgsql-data-status               	: LATEST    
+		    + pgsql-master-baseline           	: 00000000090650F8
+		    + pgsql-status                    	: PRI       
+		* Node node2:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: -INFINITY 
+		    + pgsql-data-status               	: DISCONNECT
+		    + pgsql-status                    	: STOP      
+		
+		Migration summary:
+		* Node node2: 
+		   pgsql: migration-threshold=3 fail-count=3 last-failure='Sun May  8 01:36:08 2016'
+		* Node node1: 
+		
+		Failed actions:
+		    pgsql_monitor_4000 on node2 'not running' (7): call=240, status=complete, exit-reason='none', last-rc-change='Sun May  8 01:36:08 2016', queued=0ms, exec=0ms
+		
+		
+		pgsql_REPL_INFO:node1|14|00000000090650F8
+
+    同时，Master(node1)上的复制模式被自动切换到异步复制，防止写操作hang住。
+
+		[root@node1 pha4pgsql]# tail /var/lib/pgsql/tmp/rep_mode.conf
+		synchronous_standby_names = ''
+
+4. 修复Salve   
+    在node2上执行cls_cleanup，清除fail-count后，Pacemaker会再次启动PostgreSQL进程。
+
+		[root@node2 ~]# cls_cleanup 
+		All resources/stonith devices successfully cleaned up
+		[root@node2 ~]# cls_status 
+		Last updated: Sun May  8 01:43:13 2016
+		Last change: Sun May  8 01:43:08 2016 by root via crm_resource on node1
+		Stack: corosync
+		Current DC: node2 (2) - partition with quorum
+		Version: 1.1.12-a14efad
+		2 Nodes configured
+		4 Resources configured
+		
+		
+		Online: [ node1 node2 ]
+		
+		Full list of resources:
+		
+		 vip-master	(ocf::heartbeat:IPaddr2):	Started node1 
+		 vip-slave	(ocf::heartbeat:IPaddr2):	Started node2 
+		 Master/Slave Set: msPostgresql [pgsql]
+		     Masters: [ node1 ]
+		     Slaves: [ node2 ]
+		
+		Node Attributes:
+		* Node node1:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: 1000      
+		    + pgsql-data-status               	: LATEST    
+		    + pgsql-master-baseline           	: 00000000090650F8
+		    + pgsql-status                    	: PRI       
+		* Node node2:
+		    + #cluster-name                   	: pgcluster 
+		    + #site-name                      	: pgcluster 
+		    + master-pgsql                    	: 100       
+		    + pgsql-data-status               	: STREAMING|SYNC
+		    + pgsql-status                    	: HS:sync   
+		
+		Migration summary:
+		* Node node2: 
+		* Node node1: 
+		
+		pgsql_REPL_INFO:node1|14|00000000090650F8
+
+    同时，Master(node1)上的复制模式又自动切换回到同步复制。
+
+		[root@node1 pha4pgsql]# tail /var/lib/pgsql/tmp/rep_mode.conf
+		synchronous_standby_names = 'node2'
+
+## 附录1：对pgsql RA的修改
+本项目使用的expgsql RA是在Resource Agent 3.9.7中的pgsql RA的基础上做的修改。修改内容如下：
+
+1. 引入分布式锁服务防止双节点集群出现脑裂，并防止在failover过程中丢失数据。   
+promote和monitor的同步复制切换为异步复制前都需要先获取锁，因此确保这两件事不能同时发生，也就防止了在同步复制模式下failover出现数据丢失。相应的引入以下参数：
+
+	- enable_distlock   
+	    是否启动分布式锁仲裁，对双节集群建议启用。
+	- distlock_lock_cmd   
+	    分布式锁服务的加锁命令
+	- distlock_unlock_cmd   
+	    分布式锁服务的解锁命令
+	- distlock_lockservice_deadcheck_nodelist   
+		无法访问分布式锁服务时，需要做二次检查的节点列表，通过ssh连接到这些节点后再获取锁。如果节点列表中所有节点都无法访问分布式锁服务，认为分布式锁服务失效，按已获得锁处理。如果节点列表中任何一个节点本身无法访问，按未获得锁处理。
+
+    并且内置了一个基于PostgreSQL的分布式锁实现，即tools\distlock。
+
+2. 根据Master是否发生变更动态采取restart或pg_ctl promote的方式提升Slave为Master。    
+	当Master发生变更时采用pg_ctl promote的方式提升Slave为Master；未发生变更时采用restart的方式提升。
+	相应地废弃原pgsql RA的restart_on_promote参数。
+
+3. 记录PostgreSQL上次时间线切换前的时间线和xlog位置信息    
+	这些信息记录在集群配置变量pgsql_REPL_INFO中。pgsql_REPL_INFO的值由以下3个部分组成,通过‘|’连接在一起。
+	
+	- Master节点名
+	- pg_ctl promote前的时间线
+	- pg_ctl promote前的时间线的结束位置
+	
+	RA启动时，会检查当前节点和pgsql_REPL_INFO中记录的状态是否有冲突，如有报错不允许资源启动。
+	因为有这个检查废弃原pgsql RA的PGSQL.lock锁文件。
+
+4. 资源启动时通过pgsql_REPL_INFO中记录的Master节点名，继续沿用原Master。   
+   通过这种方式加速集群的启动，并避免不必要的主从切换。集群仅在初始启动pgsql_REPL_INFO的值为空时，才通过xlog比较确定哪个节点作为Master。
+
+关于pgsql RA的原始功能请参考：[PgSQL Replicated Cluster](http://clusterlabs.org/wiki/PgSQL_Replicated_Cluster)
+
+## 附录2：参考
+- [PostgreSQL流复制高可用的原理与实践](http://www.postgres.cn/news/viewone/1/124)
 - [PgSQL Replicated Cluster](http://clusterlabs.org/wiki/PgSQL_Replicated_Cluster)
 - [Pacemaker+Corosync搭建PostgreSQL集群](http://my.oschina.net/aven92/blog/518928)
