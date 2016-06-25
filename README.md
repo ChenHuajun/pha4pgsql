@@ -85,7 +85,14 @@
 ### Linux集群环境安装与配置
 #### 环境准备
 1. 所有节点设置时钟同步
+
+	cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+	ntpdate time.windows.com && hwclock -w  
+
 2. 所有节点设置独立的主机名(node1，node2)
+
+	hostnamectl set-hostname node1
+
 3. 设置对所有节点的域名解析(修改/etc/hosts)
 4. 所有节点间设置SSH互信
 
