@@ -105,13 +105,9 @@
 
 注：如果OS自带的Pacemaker比较旧，建议下载新版的。之前在Pacemaker 1.1.7上遇到了不少Bug，因此不建议使用这个版本或更老的版本。
 
-#### 启用服务
+#### 启用pcsd服务
 在所有节点执行：
 
-	systemctl start corosync.service
-	systemctl enable corosync.service
-	systemctl start pacemaker.service
-	systemctl enable pacemaker.service
 	systemctl start pcsd.service
 	systemctl enable pcsd.service
 
@@ -135,7 +131,14 @@
 
     pcs cluster start --all
 
+#### 启用pacemaker & corosync服务
+在所有节点执行：
 
+	systemctl start corosync.service
+	systemctl enable corosync.service
+	systemctl start pacemaker.service
+	systemctl enable pacemaker.service
+	
 ### 安装和配置PostgreSQL
 
 #### 安装PostgreSQL
@@ -167,14 +170,14 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		max_wal_senders=5
 		wal_keep_segments = 32
 		hot_standby = on
-		replication_timeout = 5000
+		wal_sender_timeout = 5000
 		wal_receiver_status_interval = 2
 		max_standby_streaming_delay = -1
 		max_standby_archive_delay = -1
 		restart_after_crash = off
 		hot_standby_feedback = on
 
-    注：PostgreSQL 9.3以上版本，应将replication_timeout替换成wal_sender_timeout；PostgreSQL 9.5以上版本，可加上"wal_log_hints = on"，使得可以使用pg_rewind修复旧Master。
+    注：PostgreSQL 9.2以前版本，应将wal_sender_timeout替换成replication_timeout；PostgreSQL 9.5以上版本，可加上"wal_log_hints = on"，使得可以使用pg_rewind修复旧Master。
 
 
 4. 修改pg_hba.conf
