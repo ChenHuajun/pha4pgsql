@@ -4,7 +4,7 @@
 ## 简介
 在众多的PostgreSQL HA方案中，流复制HA方案是性能，可靠性，部署成本等方面都比较好的，也是目前被普遍采用的方案。而用于管理流复制集群的工具中，Pacemaker+Corosync又是比较成熟可靠的。
 
-但是原生的基于Pacemaker+Corosync搭建PostgreSQL流复制HA集群存在配置复杂，设置参数众多，不易使用的问题，尤其对于缺少Pacemaker使用经验的用户。本项目在Pacemaker+Corosync PostgreSQL流复制HA集群方案的基础上简化了集群配置并封装了常用的集群操作命令，目的在于简化集群的部署和使用。同时对Resource Agent 3.9.7的pgsql RA进行了增强，引入分布式锁服务，防止双节点集群出现脑裂，并确保同步复制下failover后数据不丢失。
+但是原生的基于Pacemaker+Corosync搭建PostgreSQL流复制HA集群配置和使用都比较复杂，因此封装了一些常用的集群配置和操作命令，目的在于简化集群的部署和使用。同时对Resource Agent 3.9.7的pgsql RA进行了增强，引入分布式锁服务，防止双节点集群出现脑裂，并确保同步复制下failover后数据不丢失。 但是，你还是必须了解Pacemaker的相关概念和基本操作，用于解决封装脚本处理不了的问题。
 
 
 ## 功能特性
@@ -41,7 +41,7 @@
 2. cls_stop   
    停止集群
 3. cls_online_switch      
-   在线主从切换
+   在线主从切换,对多节点集群当前不支持指定新Master。
 4. cls_master   
    输出当前Master节点名
 5. cls_status   
@@ -63,6 +63,7 @@
 13. cls_unstandby_node [nodename]   
    恢复cls_standby_node产生的节点standby状态。
 
+以上命令必须以root用户执行
 
 ## 依赖软件
 - pacemaker
@@ -177,14 +178,14 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		max_wal_senders=5
 		wal_keep_segments = 32
 		hot_standby = on
-		wal_sender_timeout = 5000
+		replication_timeout = 5000
 		wal_receiver_status_interval = 2
 		max_standby_streaming_delay = -1
 		max_standby_archive_delay = -1
 		restart_after_crash = off
 		hot_standby_feedback = on
 
-    注：PostgreSQL 9.2以前版本，应将wal_sender_timeout替换成replication_timeout；PostgreSQL 9.5以上版本，可加上"wal_log_hints = on"，使得可以使用pg_rewind修复旧Master。
+    注：PostgreSQL 9.3及以后版本，应将replication_timeout替换成wal_sender_timeout；PostgreSQL 9.5以上版本，可加上"wal_log_hints = on"，使得可以使用pg_rewind修复旧Master。
 
 
 4. 修改pg_hba.conf
@@ -926,6 +927,19 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		[root@node1 pha4pgsql]# tail /var/lib/pgsql/tmp/rep_mode.conf
 		synchronous_standby_names = 'node2'
 
+### 错误排除
+出现故障时，可通过以下方法排除故障
+
+1. 确认集群服务是否OK
+
+		pcs status
+   
+2. 查看错误日志
+
+		PostgreSQL的错误日志
+		/var/log/messages
+		/var/log/cluster/corosync.log
+ 
 ## 附录1：对pgsql RA的修改
 本项目使用的expgsql RA是在Resource Agent 3.9.7中的pgsql RA的基础上做的修改。修改内容如下：
 
