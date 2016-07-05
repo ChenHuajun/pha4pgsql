@@ -45,7 +45,7 @@ pgsql_status() {
         for hanode in $node1 $node2 $node3
         do
             if [ "$hanode" != "$localnode" ]; then
-                remote_status=`ssh -o ConnectTimeout=2 $hanode crm_mon -Afr1 2>/dev/null|grep -E "Current DC:|Online:"`
+                remote_status=`ssh -o ConnectTimeout=2 $hanode crm_mon -Afr1|grep -E "Current DC:|Online:"`
                 if [ "$remote_status" = "$local_status" ]; then
                     break;
                 fi
@@ -59,7 +59,7 @@ pgsql_status() {
     
     fi
     
-    pgsql_locates=`crm_resource --resource msPostgresql --locate 2>/dev/null`
+    pgsql_locates=`crm_resource --resource msPostgresql --locate`
     if [ $? -ne 0 ]; then
         echo "failed to execute \"crm_resource --resource msPostgresql --locate\"">&2
         return 1
