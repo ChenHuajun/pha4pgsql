@@ -116,6 +116,12 @@
 	systemctl stop firewalld.service
 	iptables -F
 
+如果开启防火墙需要开放postgres，pcsd和corosync的端口。
+
+* postgres:5432/tcp
+* pcsd:2224/tcp
+* corosync:5405/udp
+
 #### 安装Pacemaker和Corosync及相关软件包
 在所有节点执行：
 
