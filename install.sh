@@ -8,10 +8,18 @@ if [ -z "${pha4pgsql_dir}" -o -z "${OCF_ROOT}" ]; then
   exit 1
 fi
 
+echo "generate config.pcs..."
+./gencfg.sh
+if [ $? -ne 0 ]; then
+    echo 'failed to execute "gencfg.sh"' >&2
+    exit 1
+fi
+
+chmod 600 config.ini config.pcs
 chmod +x tools/* ra/* *.sh bin/cls_*
 
 # copy scripts
-for node in ${node1} ${node2} ${node3} ${readnodes}
+for node in ${node1} ${node2} ${node3} ${othernodes}
 do
     if [ "`hostname`" == "$node" ]; then
         mkdir -p ${pha4pgsql_dir}
@@ -25,5 +33,6 @@ do
         scp -p ra/* ${node}:${OCF_ROOT}/resource.d/heartbeat/
     fi
 done
+
 
 

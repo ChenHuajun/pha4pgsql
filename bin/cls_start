@@ -38,7 +38,7 @@ if [ $? -ne 0 ]; then
 	exit 2
 fi
 
-check_with_timeout "check_replication_ok" 20
+check_with_timeout "check_replication_ok" 30
 if [ $? -ne 0 ]; then
 	echo "start replication timeout" >&2
 	exit 2

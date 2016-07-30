@@ -41,7 +41,13 @@
 2. cls_stop   
    停止集群
 3. cls_online_switch      
-   在线主从切换,对多节点集群当前不支持指定新Master。
+   在线主从切换,对多节点集群当前不支持指定新Master。在多节点的同步复制下，只有pgsql-data-status值为“STREAMING|SYNC”的节点，即同步复制节点可以作为候选master。如果希望指定其它节点作为新的master，可以在master上执行下面的操作，然后等待pgsql-data-status更新。
+
+		su - postgres
+		echo "synchronous_standby_names = 'node3'" > /var/lib/pgsql/tmp/rep_mode.conf
+		pg_ctl -D /home/postgresql/data reload
+		exit
+
 4. cls_master   
    输出当前Master节点名
 5. cls_status   
@@ -50,7 +56,7 @@
    清除资源状态和fail-count。在某个节点上资源失败次数(fail-count)超过3次Pacemaker将不再分配该资源到此节点，人工修复故障后需要调用cleanup让Pacemkaer重新尝试启动资源。
 7. cls_reset_master [master]   
    设置pgsql_REPL_INFO使指定的节点成为Master；如未指定Master，则清除pgsql_REPL_INFO让Pacemaker重新在所有节点中选出xlog位置最新的节点作为Master。仅用于集群中没有任何节点满足Master条件情况下的紧急修复。
-8. cls_repair_slave   
+8. cls_repair_by_pg_rewind
    通过pg_rewind修复当前节点，主要用于旧Master的修复，回退超出时间线分叉点的那部分更新，并和新Master建立复制关系。pg_rewind仅在PostgreSQL 9.5以上版本提供
 9. cls_rebuild_slave   
    通过pg_basebackup在当前节点重建Slave。执行该命令前需要停止当前节点上的PostgreSQL进程并清空旧的数据目录。
@@ -58,9 +64,13 @@
    unmanage所有资源使其脱离Pacemaker的控制。当需要重启Pacemaker和Corosync又不能停止PostgreSQL服务时，可以先调用这个命令，Pacemaker和Corosync重启完成后再用cls_manage恢复管理。
 11. cls_manage   
    恢复cls_unmanage产生的资源unmanaged状态。
-12. cls_standby_node [nodename]   
+12. cls_maintenance_node <nodename> 
+   使节点进入维护模式。维护模式和unmanage resource相比的区别是会取消monitor，比unmanage更彻底。
+13. cls_unmaintenance_node <nodename> 
+   解除节点的维护模式。
+14. cls_standby_node <nodename>   
    释放某节点上所有资源。可用于特定节点的维护，比如升级。
-13. cls_unstandby_node [nodename]   
+15. cls_unstandby_node <nodename>   
    恢复cls_standby_node产生的节点standby状态。
 
 以上命令必须以root用户执行
@@ -263,7 +273,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
 2. 编辑config.ini
 
-		cluster_type=dual
+		pcs_template=dual.pcs.template
 		OCF_ROOT=/usr/lib/ocf
 		RESOURCE_LIST="msPostgresql vip-master vip-slave"
 		pha4pgsql_dir=/opt/pha4pgsql
@@ -276,6 +286,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		pgsql_pgctl=/usr/bin/pg_ctl
 		pgsql_psql=/usr/bin/psql
 		pgsql_pgdata=/data/postgresql/data
+		pgsql_pgdata=5432
 		pgsql_restore_command=""
 		pgsql_rep_mode=sync
 		pgsql_repuser=replication
@@ -289,9 +300,77 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 3. 安装pha4pgsql
 
 		sh install.sh
+   
+	这一步会拷贝需要的脚本到本地和远程机器上，并生成集群的资源配置文件。
+
+		[root@node1 pha4pgsql]# cat config.pcs 
+		
+		pcs cluster cib pgsql_cfg
+		
+		pcs -f pgsql_cfg property set no-quorum-policy="ignore"
+		pcs -f pgsql_cfg property set stonith-enabled="false"
+		pcs -f pgsql_cfg resource defaults resource-stickiness="1"
+		pcs -f pgsql_cfg resource defaults migration-threshold="10"
+		
+		pcs -f pgsql_cfg resource create vip-master IPaddr2 \
+		   ip="192.168.41.136" \
+		   nic="eno33554984" \
+		   cidr_netmask="24" \
+		   op start   timeout="60s" interval="0s"  on-fail="restart" \
+		   op monitor timeout="60s" interval="10s" on-fail="restart" \
+		   op stop    timeout="60s" interval="0s"  on-fail="block"
+		
+		pcs -f pgsql_cfg resource create vip-slave IPaddr2 \
+		   ip="192.168.41.137" \
+		   nic="eno33554984" \
+		   cidr_netmask="24" \
+		   op start   timeout="60s" interval="0s"  on-fail="restart" \
+		   op monitor timeout="60s" interval="10s" on-fail="restart" \
+		   op stop    timeout="60s" interval="0s"  on-fail="block"
+		   
+		pcs -f pgsql_cfg resource create pgsql expgsql \
+		   pgctl="/usr/bin/pg_ctl" \
+		   psql="/usr/bin/psql" \
+		   pgdata="5432" \
+		   pgport="" \
+		   rep_mode="sync" \
+		   node_list="node1 node2" \
+		   restore_command="" \
+		   primary_conninfo_opt="user=replication password=replication keepalives_idle=60 keepalives_interval=5 keepalives_count=5" \
+		   master_ip="192.168.41.136" \
+		   restart_on_promote="false" \
+		   enable_distlock="true" \
+		   distlock_lock_cmd="/opt/pha4pgsql/tools/distlock '/usr/bin/psql \"host=node3 port=5439 dbname=postgres user=postgres connect_timeout=5\"' lock distlock:pgsql_cls1 @owner 9 12" \
+		   distlock_unlock_cmd="/opt/pha4pgsql/tools/distlock '/usr/bin/psql \"host=node3 port=5439 dbname=postgres user=postgres connect_timeout=5\"' unlock distlock:pgsql_cls1 @owner" \
+		   distlock_lockservice_deadcheck_nodelist="node1 node2" \
+		   op start   timeout="60s" interval="0s"  on-fail="restart" \
+		   op monitor timeout="60s" interval="4s" on-fail="restart" \
+		   op monitor timeout="60s" interval="3s"  on-fail="restart" role="Master" \
+		   op promote timeout="60s" interval="0s"  on-fail="restart" \
+		   op demote  timeout="60s" interval="0s"  on-fail="stop" \
+		   op stop    timeout="60s" interval="0s"  on-fail="block" \
+		   op notify  timeout="60s" interval="0s"
+		
+		pcs -f pgsql_cfg resource master msPostgresql pgsql \
+		   master-max=1 master-node-max=1 clone-node-max=1 notify=true \
+		   migration-threshold="3" target-role="Master"
+		
+		pcs -f pgsql_cfg constraint colocation add vip-master with Master msPostgresql INFINITY
+		pcs -f pgsql_cfg constraint order promote msPostgresql then start vip-master symmetrical=false score=INFINITY
+		pcs -f pgsql_cfg constraint order demote  msPostgresql then stop  vip-master symmetrical=false score=0
+		
+		pcs -f pgsql_cfg constraint colocation add vip-slave with Slave msPostgresql INFINITY
+		pcs -f pgsql_cfg constraint order promote  msPostgresql then start vip-slave symmetrical=false score=INFINITY
+		pcs -f pgsql_cfg constraint order stop msPostgresql then stop vip-slave symmetrical=false score=0
+		
+		pcs cluster cib-push pgsql_cfg
+
+
+	可以根据需要对config.pcs做相应修改，在执行下面的配置脚本
+
 		./setup.sh
 
-    注意，安装过程只需在一个节点上执行即可。
+    注意，安装和配置过程只需在一个节点上执行即可。
 
 4. 设置环境变量
 
@@ -374,6 +453,9 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		It's displayed when it's Master.
 		These states are the transitional state of final data, and it may be not consistent with the state of actual data. For instance, During PRI, the state is "LATEST". But the node is stopped or down, this state "LATEST" is maintained if Master doesn't exist in other nodes. It never changes to "DISCONNECT" for oneself. When other node newly is promoted, this new Master changes the state of old Master to "DISCONNECT". When any node can not become Master, this "LATEST" will be keeped.
 
+	pgsql_REPL_INFO的3段内容分别指当前master，上次提升前的时间线和xlog位置。
+
+		pgsql_REPL_INFO:node1|1|00000000070000D0
 
 ## 故障测试
 
@@ -484,10 +566,21 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		pgsql_REPL_INFO:node2|2|0000000007000410
 
 
-4. 修复旧Master    
-    通过pg_baseback修复旧Master
+4. 修复旧Master
 
-		[root@node1 pha4pgsql]# rm -rf /data/postgresql/data/*
+	可通过pg_basebackup修复旧Master
+
+		# su - postgres
+		$ rm -rf /data/postgresql/data
+		$ pg_basebackup -h 192.168.41.136 -U postgres -D /data/postgresql/data -X stream -P
+		$ exit
+		# pcs resource cleanup msPostgresql
+    
+	如果恢复失败，请检查PostgreSQL和Pacemaker日志文件。    
+
+	通过pg_baseback修复旧Master。cls_rebuild_slave是对pg_basebackup的包装，主要多了执行结果状态的检查。
+
+		[root@node1 pha4pgsql]# rm -rf /data/postgresql/data
 		[root@node1 pha4pgsql]# cls_rebuild_slave 
 		22636/22636 kB (100%), 1/1 tablespace
 		All resources/stonith devices successfully cleaned up
@@ -538,7 +631,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
      9.5以上版本还可以通过pg_rewind修复旧Master
 
-		[root@node1 pha4pgsql]# cls_repair_slave 
+		[root@node1 pha4pgsql]# cls_repair_by_pg_rewind 
 		connected to server
 		servers diverged at WAL position 0/7000410 on timeline 2
 		rewinding from last common checkpoint at 0/7000368 on timeline 2
@@ -554,6 +647,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		wait for recovery complete
 		....
 		slave recovery of node1 successed
+
 
 
 ### Master网络故障
@@ -748,7 +842,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
 6. 修复node1(旧Master)
  
-    修复node1(旧Master)的方法和前面一样，使用cls_repair_slave或cls_rebuild_slave。
+    修复node1(旧Master)的方法和前面一样，可使用cls_repair_slave、cls_repair_by_pg_rewind，或者直接使用pg_basebackup、pg_rewind，。
 
 		[root@node1 pha4pgsql]# cls_repair_slave 
 		connected to server
@@ -927,7 +1021,39 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		[root@node1 pha4pgsql]# tail /var/lib/pgsql/tmp/rep_mode.conf
 		synchronous_standby_names = 'node2'
 
-### 错误排除
+## 多节点集群的设置
+
+参考pha4pgsql\template\config_muti.ini.sample的例子，编辑config.ini
+
+	pcs_template=muti.pcs.template
+	OCF_ROOT=/usr/lib/ocf
+	RESOURCE_LIST="msPostgresql vip-master vip-slave"
+	pha4pgsql_dir=/opt/pha4pgsql
+	writer_vip=192.168.41.136
+	reader_vip=192.168.41.137
+	node1=node1
+	node2=node2
+	node3=node3
+	vip_nic=eno33554984
+	vip_cidr_netmask=24
+	pgsql_pgctl=/usr/pgsql-9.5/bin/pg_ctl
+	pgsql_psql=/usr/pgsql-9.5/bin/psql
+	pgsql_pgdata=/data/postgresql/data
+	pgsql_pgport=5432
+	pgsql_restore_command=""
+	pgsql_rep_mode=sync
+	pgsql_repuser=replication
+	pgsql_reppassord=replication
+	pgsql_enable_distlock=false
+	pgsql_distlock_psql_cmd='/usr/bin/psql \\"host=node3 port=5439 dbname=postgres user=postgres connect_timeout=5\\"'
+	pgsql_distlock_lockname=pgsql_cls1
+
+然后执行安装和配置
+
+	sh install.sh
+	./setup.sh
+
+## 错误排查
 出现故障时，可通过以下方法排除故障
 
 1. 确认集群服务是否OK
@@ -939,6 +1065,63 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		PostgreSQL的错误日志
 		/var/log/messages
 		/var/log/cluster/corosync.log
+
+	Pacemaker输出的日志非常多，可以进行过滤。
+
+	只看Pacemaker的资源调度（在Current DC节点上执行)：
+	
+		grep Initiating /var/log/messages 
+	
+	只看查看expgsql RA的输出：
+	
+		grep expgsql /var/log/messages
+
+##其它故障的处理
+### 无Master时的修复
+
+如果切换失败或其它原因导致集群中没有Master，可以参考下面的步骤修复
+
+#### 方法1：使用cleanup修复
+
+	cls_cleanup
+
+大部分情况，cleanup就可以找到Master。如果不成功，再采用下面的方法
+
+#### 方法2：人工修复复制关系
+1. 将资源脱离集群管理
+
+		cls_unmanage
+
+2. 人工修复PostgreSQL，建立复制关系
+   至于master的选取，可以选择pgsql_REPL_INFO中的master节点，或根据xlog位置确定。
+3. 在所有节点上停止PostgreSQL
+4. 清除状态并恢复集群管理
+
+		cls_manage
+		cls_reset_master
+
+#### 方法3：快速恢复Master节点再恢复Slave
+可以明确指定将哪个节点作为Master，省略则通过xlog位置比较确定master
+
+	cls_reset_master [master]
+
+
+### 疑难的Pacemaker问题的处理
+有时候可能会遇到一些顽固的问题，Pacemaker不按期望的动作，或某个资源处于错误状态却无法清除。
+这时最简单的办法就是清除CIB重新设置。可执行下面的命令完成。
+
+	./setup.sh [master]
+
+如果不指定master，并且PostgreSQL进程是活动的，通过当前PostgreSQL进程的主备关系决定谁是master。
+如果当前没有处于主的PostgreSQL进程，通过比较xlog位置确定谁作为master。
+
+setup.sh还可以完全取代前面的cls_reset_master。
+
+### fail-count的清除
+如果某个节点上有资源的fail-count不为0，最好将其清除，即使当前资源是健康的。
+
+	cls_cleanup
+
  
 ## 附录1：对pgsql RA的修改
 本项目使用的expgsql RA是在Resource Agent 3.9.7中的pgsql RA的基础上做的修改。修改内容如下：

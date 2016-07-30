@@ -145,7 +145,7 @@ check_replication_ok()
 {
     local data_status
 
-    for node in $node1 $node2 $node3 $readnodes
+    for node in $node1 $node2 $node3 $othernodes
     do
         data_status=`crm_attribute -l forever -N "$node" -n "pgsql-data-status" -G -q 2>/dev/null`
         if [ "$data_status" != "LATEST" -a "$data_status" != "STREAMING|ASYNC" -a "$data_status" != "STREAMING|POTENTIAL" -a "$data_status" != "STREAMING|SYNC" ]; then

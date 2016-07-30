@@ -1,9 +1,4 @@
 
-for resource in vip-master vip-slave msPostgresql
-do
-   pcs resource delete $resource --force 2>/dev/null
-done 
-
 pcs cluster cib pgsql_cfg
 
 pcs -f pgsql_cfg property set no-quorum-policy="stop"
@@ -31,8 +26,9 @@ pcs -f pgsql_cfg resource create pgsql expgsql \
    pgctl="${pgsql_pgctl}" \
    psql="${pgsql_psql}" \
    pgdata="${pgsql_pgdata}" \
+   pgport="${pgsql_pgport}" \
    rep_mode="${pgsql_rep_mode}" \
-   node_list="${node1} ${node2} ${node3} ${readnodes}" \
+   node_list="${node1} ${node2} ${node3} ${othernodes}" \
    restore_command="${pgsql_restore_command}" \
    primary_conninfo_opt="user=${pgsql_repuser} password=${pgsql_reppassord} keepalives_idle=60 keepalives_interval=5 keepalives_count=5" \
    master_ip="${writer_vip}" \
@@ -40,7 +36,7 @@ pcs -f pgsql_cfg resource create pgsql expgsql \
    enable_distlock="${pgsql_enable_distlock}" \
    distlock_lock_cmd="${pha4pgsql_dir}/tools/distlock '${pgsql_distlock_psql_cmd}' lock distlock:${pgsql_distlock_lockname} @owner 9 12" \
    distlock_unlock_cmd="${pha4pgsql_dir}/tools/distlock '${pgsql_distlock_psql_cmd}' unlock distlock:${pgsql_distlock_lockname} @owner" \
-   distlock_lockservice_deadcheck_nodelist="${node1} ${node2} ${node3} ${readnodes}" \
+   distlock_lockservice_deadcheck_nodelist="${node1} ${node2} ${node3} ${othernodes}" \
    op start   timeout="60s" interval="0s"  on-fail="restart" \
    op monitor timeout="60s" interval="4s" on-fail="restart" \
    op monitor timeout="60s" interval="3s"  on-fail="restart" role="Master" \
@@ -51,7 +47,7 @@ pcs -f pgsql_cfg resource create pgsql expgsql \
 
 pcs -f pgsql_cfg resource master msPostgresql pgsql \
    master-max=1 master-node-max=1 clone-node-max=1 notify=true \
-   migration-threshold="3" target-role="Stopped"
+   migration-threshold="3" target-role="Master"
 
 pcs -f pgsql_cfg constraint colocation add vip-master with Master msPostgresql INFINITY
 pcs -f pgsql_cfg constraint order promote msPostgresql then start vip-master symmetrical=false score=INFINITY

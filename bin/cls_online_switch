@@ -29,7 +29,7 @@ if [ -z "$MASTER_NODE" ]; then
     exit 10
 fi
 
-for node in $node1 $node2 $node3 $readnodes
+for node in $node1 $node2 $node3 $othernodes
 do
     dead_nodes=""
     is_alive=0
@@ -103,7 +103,7 @@ pcs resource cleanup msPostgresql >/dev/null 2>&1
 #Check if switch completed
 echo "wait for switch complete"
 OLD_MASTER_NODE="$MASTER_NODE"
-for i in {1..30}
+for i in {1..60}
 do
     pgsql_status
     rc=$?

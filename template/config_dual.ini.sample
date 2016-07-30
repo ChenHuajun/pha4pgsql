@@ -1,4 +1,4 @@
-cluster_type=dual
+pcs_template=dual.pcs.template
 OCF_ROOT=/usr/lib/ocf
 RESOURCE_LIST="msPostgresql vip-master vip-slave"
 pha4pgsql_dir=/opt/pha4pgsql
@@ -11,6 +11,7 @@ vip_cidr_netmask=24
 pgsql_pgctl=/usr/bin/pg_ctl
 pgsql_psql=/usr/bin/psql
 pgsql_pgdata=/data/postgresql/data
+pgsql_pgport=5432
 pgsql_restore_command=""
 pgsql_rep_mode=sync
 pgsql_repuser=replication

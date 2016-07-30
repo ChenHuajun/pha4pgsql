@@ -59,6 +59,8 @@ if [ $? -ne 0 ]; then
 	exit 1
 fi
 
+echo "pg_rewind complete!"
+
 ./cls_unstandby_node $nodename
 
 ./cls_cleanup
@@ -66,7 +68,7 @@ fi
 #Check if recovery completed
 echo "wait for recovery complete"
 OLD_MASTER_NODE="$MASTER_NODE"
-for i in {1..10}
+for i in {1..60}
 do
     data_status=`crm_attribute -l forever -N $nodename -n "pgsql-data-status" -Q`
     rc=$?
@@ -84,7 +86,7 @@ done
 echo
 
 if [ "$data_status" != "STREAMING|ASYNC" -a "$data_status" != "STREAMING|POTENTIAL"  -a "$data_status" != "STREAMING|SYNC" ]; then
-    echo "slave recovery of $nodename failed"
+    echo "slave recovery of $nodename timeout"
     exit 11
 fi
 

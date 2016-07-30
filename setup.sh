@@ -3,14 +3,32 @@
 cd "$(dirname "$0")"
 . ./config.ini
 
-echo "generate config.pcs..."
-./gencfg.sh
+master=$1
 
-# clear pgsql-data-status attribute from all node
+if [ ! -f config.pcs ]; then
+    echo "config.pcs does not exists, please run install.sh/gencfg.sh to create it"
+fi
+
+# erase cib
+echo "erase cib..."
+# switch all node to maintenance mode
 for node in `crm_node -l|awk '{print $2}'`
 do
-    crm_attribute -l forever -N ${node} -n "pgsql-data-status" -D
+    pcs property set --node ${node} maintenance=on
 done
+
+cibadmin --erase -f
+if [ $? -ne 0 ]; then
+    echo 'failed to execute "cibadmin --erase -f"' >&2
+    exit 1
+fi
+
+pcs resource cleanup
+
+if [ -n "$master" ]; then
+    echo "set the pgsql_REPL_INFO to $master"
+    crm_attribute --type crm_config --name pgsql_REPL_INFO -s pgsql_replication -v "$master"
+fi
 
 # setup cib
 echo "setup cib..."

@@ -1,9 +1,4 @@
 
-for resource in vip-master vip-slave msPostgresql
-do
-   pcs resource delete $resource --force 2>/dev/null
-done 
-
 pcs cluster cib pgsql_cfg
 
 pcs -f pgsql_cfg property set no-quorum-policy="ignore"
@@ -31,6 +26,7 @@ pcs -f pgsql_cfg resource create pgsql expgsql \
    pgctl="${pgsql_pgctl}" \
    psql="${pgsql_psql}" \
    pgdata="${pgsql_pgdata}" \
+   pgport="${pgsql_pgport}" \
    rep_mode="${pgsql_rep_mode}" \
    node_list="${node1} ${node2}" \
    restore_command="${pgsql_restore_command}" \
@@ -50,8 +46,8 @@ pcs -f pgsql_cfg resource create pgsql expgsql \
    op notify  timeout="60s" interval="0s"
 
 pcs -f pgsql_cfg resource master msPostgresql pgsql \
-   master-max=1 master-node-max=1 clone-max=2 clone-node-max=1 notify=true \
-   migration-threshold="3" target-role="Stopped"
+   master-max=1 master-node-max=1 clone-node-max=1 notify=true \
+   migration-threshold="3" target-role="Master"
 
 pcs -f pgsql_cfg constraint colocation add vip-master with Master msPostgresql INFINITY
 pcs -f pgsql_cfg constraint order promote msPostgresql then start vip-master symmetrical=false score=INFINITY

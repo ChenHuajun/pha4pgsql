@@ -4,7 +4,7 @@
 cd "$(dirname "$0")"
 . ./config.ini
 
-template_file=template/${cluster_type}.pcs.template
+template_file=template/${pcs_template}
 
 # generate config.pcs
 sed -e 's#${pha4pgsql_dir}#'${pha4pgsql_dir}#g \
@@ -13,12 +13,13 @@ sed -e 's#${pha4pgsql_dir}#'${pha4pgsql_dir}#g \
     -e 's#${node1}#'${node1}#g \
     -e 's#${node2}#'${node2}#g \
     -e 's#${node3}#'${node3}#g \
-    -e 's#${readnodes}#'${readnodes}#g \
+    -e 's#${othernodes}#'${othernodes}#g \
     -e 's#${vip_nic}#'${vip_nic}#g \
     -e 's#${vip_cidr_netmask}#'${vip_cidr_netmask}#g \
     -e 's#${pgsql_pgctl}#'${pgsql_pgctl}#g \
     -e 's#${pgsql_psql}#'${pgsql_psql}#g \
     -e 's#${pgsql_pgdata}#'${pgsql_pgdata}#g \
+    -e 's#${pgsql_pgport}#'${pgsql_pgport}#g \
     -e 's#${pgsql_rep_mode}#'${pgsql_rep_mode}#g \
     -e 's#${pgsql_repuser}#'"${pgsql_repuser}#g" \
     -e 's#${pgsql_reppassord}#'"${pgsql_reppassord}#g" \

@@ -40,10 +40,11 @@ if [ "$data_status" = "STREAMING|ASYNC" -o "$data_status" = "STREAMING|POTENTIAL
 	exit 100
 fi
 
-# if [ -d $pgsql_pgdata ]; then
-	# echo "The PostgreSQL data directory $pgsql_pgdata exists, you must remove it first!" >&2
-	# exit 100
-# fi
+if [ -d $pgsql_pgdata ]; then
+
+	echo "The PostgreSQL data directory $pgsql_pgdata exists, you must remove it first!" >&2
+	exit 100
+fi
 
 # mkdir -p $pgsql_pgdata
 # chown postgres:postgres $pgsql_pgdata
@@ -53,29 +54,31 @@ fi
 	# exit 1
 # fi
 
-# ./cls_standby_node $nodename
-# if [ $? -ne 0 ]; then
-	# echo "failed to call cls_standby_node $nodename" >&2
-	# exit 1
-# fi
+./cls_standby_node $nodename
+if [ $? -ne 0 ]; then
+	echo "failed to call cls_standby_node $nodename" >&2
+	exit 1
+fi
 
 PG_BASEBACKUP=$(dirname "$pgsql_pgctl")/pg_basebackup
 
 su - postgres -c "PGPASSWORD=$pgsql_reppassord $PG_BASEBACKUP -h $writer_vip -U $pgsql_repuser -D $pgsql_pgdata -X stream -P"
 if [ $? -ne 0 ]; then
 	echo "failed to call \"$PG_BASEBACKUP -h $writer_vip -U $pgsql_repuser -D $pgsql_pgdata -X stream -P\"" >&2
-#	./cls_unstandby_node $nodename >/dev/null 2>/dev/null
+	./cls_unstandby_node $nodename >/dev/null 2>/dev/null
 	exit 1
 fi
 
-#./cls_unstandby_node $nodename
+echo "pg_basebackup complete!"
+
+./cls_unstandby_node $nodename
 
 ./cls_cleanup
 
 #Check if recovery completed
 echo "wait for recovery complete"
 OLD_MASTER_NODE="$MASTER_NODE"
-for i in {1..10}
+for i in {1..60}
 do
     data_status=`crm_attribute -l forever -N $nodename -n "pgsql-data-status" -Q`
     rc=$?
@@ -93,7 +96,7 @@ done
 echo
 
 if [ "$data_status" != "STREAMING|ASYNC" -a "$data_status" != "STREAMING|POTENTIAL" -a "$data_status" != "STREAMING|SYNC" ]; then
-    echo "slave recovery of $nodename failed"
+    echo "slave recovery of $nodename timeout"
     exit 11
 fi
 

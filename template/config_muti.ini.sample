@@ -1,4 +1,4 @@
-cluster_type=muti
+pcs_template=muti.pcs.template
 OCF_ROOT=/usr/lib/ocf
 RESOURCE_LIST="msPostgresql vip-master vip-slave"
 pha4pgsql_dir=/opt/pha4pgsql
@@ -7,16 +7,17 @@ reader_vip=192.168.41.137
 node1=node1
 node2=node2
 node3=node3
-readnodes=""
+othernodes=""
 vip_nic=eno33554984
 vip_cidr_netmask=24
 pgsql_pgctl=/usr/bin/pg_ctl
 pgsql_psql=/usr/bin/psql
 pgsql_pgdata=/data/postgresql/data
+pgsql_pgport=5432
 pgsql_restore_command=""
 pgsql_rep_mode=sync
 pgsql_repuser=replication
 pgsql_reppassord=replication
 pgsql_enable_distlock=false
-pgsql_distlock_psql_cmd='/usr/bin/psql \\"host=node3 port=5439 dbname=postgres user=postgres connect_timeout=5\\"'
+pgsql_distlock_psql_cmd=''
 pgsql_distlock_lockname=pgsql_cls1
