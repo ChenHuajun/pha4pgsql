@@ -52,9 +52,9 @@ fi
 
 PG_REWIND=$(dirname "$pgsql_pgctl")/pg_rewind
 
-su - postgres -c "$PG_REWIND -D $pgsql_pgdata --source-server='host=$writer_vip dbname=template1 user=$pgsql_repuser password=$pgsql_reppassord' -P"
+su - postgres -c "$PG_REWIND -D $pgsql_pgdata --source-server='host=$writer_vip port=$pgsql_pgport dbname=template1 user=$pgsql_repuser password=$pgsql_reppassord' -P"
 if [ $? -ne 0 ]; then
-	echo "failed to call \"$PG_REWIND -D $pgsql_pgdata --source-server='host=$writer_vip' -P\"" >&2
+	echo "failed to call \"$PG_REWIND -D $pgsql_pgdata --source-server='host=$writer_vip' port=$pgsql_pgport -P\"" >&2
 	./cls_unstandby_node $nodename >/dev/null 2>/dev/null
 	exit 1
 fi

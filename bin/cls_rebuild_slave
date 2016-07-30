@@ -62,9 +62,9 @@ fi
 
 PG_BASEBACKUP=$(dirname "$pgsql_pgctl")/pg_basebackup
 
-su - postgres -c "PGPASSWORD=$pgsql_reppassord $PG_BASEBACKUP -h $writer_vip -U $pgsql_repuser -D $pgsql_pgdata -X stream -P"
+su - postgres -c "PGPASSWORD=$pgsql_reppassord $PG_BASEBACKUP -h $writer_vip -p $pgsql_pgport -U $pgsql_repuser -D $pgsql_pgdata -X stream -P"
 if [ $? -ne 0 ]; then
-	echo "failed to call \"$PG_BASEBACKUP -h $writer_vip -U $pgsql_repuser -D $pgsql_pgdata -X stream -P\"" >&2
+	echo "failed to call \"$PG_BASEBACKUP -h $writer_vip -p $pgsql_pgport -U $pgsql_repuser -D $pgsql_pgdata -X stream -P\"" >&2
 	./cls_unstandby_node $nodename >/dev/null 2>/dev/null
 	exit 1
 fi
