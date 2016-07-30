@@ -54,7 +54,7 @@ OCF_RESKEY_start_opt_default=""
 OCF_RESKEY_ctl_opt_default=""
 OCF_RESKEY_pgdb_default=template1
 OCF_RESKEY_logfile_default=/dev/null
-OCF_RESKEY_stop_escalate_default=30
+OCF_RESKEY_stop_escalate_default=90
 OCF_RESKEY_monitor_user_default=""
 OCF_RESKEY_monitor_password_default=""
 OCF_RESKEY_monitor_sql_default="select now();"
@@ -72,7 +72,7 @@ OCF_RESKEY_restart_on_promote_default="false"
 OCF_RESKEY_tmpdir_default="/var/lib/pgsql/tmp"
 OCF_RESKEY_xlog_check_count_default="3"
 OCF_RESKEY_crm_attr_timeout_default="5"
-OCF_RESKEY_stop_escalate_in_slave_default=30
+OCF_RESKEY_stop_escalate_in_slave_default=90
 OCF_RESKEY_replication_slot_name_default=""
 # Defaults for distributed lock
 OCF_RESKEY_enable_distlock_default="false"
@@ -285,7 +285,7 @@ If you use PostgreSQL 9.3 or higher and define unix_socket_directories in the po
 
 <parameter name="stop_escalate" unique="0" required="0">
 <longdesc lang="en">
-Number of shutdown retries (using -m fast) before resorting to -m immediate
+Number of seconds to wait for stop (using -m fast) before resorting to -m immediate
 </longdesc>
 <shortdesc lang="en">stop escalation</shortdesc>
 <content type="integer" default="${OCF_RESKEY_stop_escalate_default}" />
@@ -437,7 +437,7 @@ This is optional for replication.
 
 <parameter name="stop_escalate_in_slave" unique="0" required="0">
 <longdesc lang="en">
-Number of shutdown retries (using -m fast) before resorting to -m immediate
+Number of seconds to wait for stop (using -m fast) before resorting to -m immediate
 in slave state.
 This is optional for replication.
 </longdesc>
@@ -858,6 +858,12 @@ pgsql_real_stop() {
     stop_escalate=$OCF_RESKEY_stop_escalate
     if [ "$1" = "slave" ]; then
         stop_escalate="$OCF_RESKEY_stop_escalate_in_slave"
+    fi
+    # adjust stop_escalate time when it is longer than the timeout
+    if [ -n "$OCF_RESKEY_CRM_meta_timeout" ] && \
+        [ "$stop_escalate" -ge $((OCF_RESKEY_CRM_meta_timeout/1000)) ]; then
+        stop_escalate=$(((OCF_RESKEY_CRM_meta_timeout/1000) - 10))
+        ocf_log info "stop_escalate(or stop_escalate_in_slave) time is adjusted to ${stop_escalate} based on the configured timeout."
     fi
 
     # Stop PostgreSQL, do not wait for clients to disconnect
