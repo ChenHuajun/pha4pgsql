@@ -1045,7 +1045,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 	pgsql_pgctl=/usr/pgsql-9.5/bin/pg_ctl
 	pgsql_psql=/usr/pgsql-9.5/bin/psql
 	pgsql_pgdata=/data/postgresql/data
-	pgsql_pgport=5432
+	pgsql_pgport=5433
 	pgsql_restore_command=""
 	pgsql_rep_mode=sync
 	pgsql_repuser=replication
@@ -1057,6 +1057,73 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 然后执行安装和配置
 
 	sh install.sh
+
+生成的资源配置如下，可以根据情况修改：
+
+	[root@node1 pha4pgsql]# cat config.pcs 
+	
+	pcs cluster cib pgsql_cfg
+	
+	pcs -f pgsql_cfg property set no-quorum-policy="stop"
+	pcs -f pgsql_cfg property set stonith-enabled="false"
+	pcs -f pgsql_cfg resource defaults resource-stickiness="1"
+	pcs -f pgsql_cfg resource defaults migration-threshold="10"
+	
+	pcs -f pgsql_cfg resource create vip-master IPaddr2 \
+	   ip="192.168.41.136" \
+	   nic="eno33554984" \
+	   cidr_netmask="24" \
+	   op start   timeout="60s" interval="0s"  on-fail="restart" \
+	   op monitor timeout="60s" interval="10s" on-fail="restart" \
+	   op stop    timeout="60s" interval="0s"  on-fail="block"
+	
+	pcs -f pgsql_cfg resource create vip-slave IPaddr2 \
+	   ip="192.168.41.137" \
+	   nic="eno33554984" \
+	   cidr_netmask="24" \
+	   op start   timeout="60s" interval="0s"  on-fail="restart" \
+	   op monitor timeout="60s" interval="10s" on-fail="restart" \
+	   op stop    timeout="60s" interval="0s"  on-fail="block"
+	   
+	pcs -f pgsql_cfg resource create pgsql expgsql \
+	   pgctl="/usr/pgsql-9.5/bin/pg_ctl" \
+	   psql="/usr/pgsql-9.5/bin/psql" \
+	   pgdata="/data/postgresql/data" \
+	   pgport="5433" \
+	   rep_mode="sync" \
+	   node_list="node1 node2 node3 " \
+	   restore_command="" \
+	   primary_conninfo_opt="user=replication password=replication keepalives_idle=60 keepalives_interval=5 keepalives_count=5" \
+	   master_ip="192.168.41.136" \
+	   restart_on_promote="false" \
+	   enable_distlock="false" \
+	   distlock_lock_cmd="/opt/pha4pgsql/tools/distlock '' lock distlock:pgsql_cls1 @owner 9 12" \
+	   distlock_unlock_cmd="/opt/pha4pgsql/tools/distlock '' unlock distlock:pgsql_cls1 @owner" \
+	   distlock_lockservice_deadcheck_nodelist="node1 node2 node3 " \
+	   op start   timeout="60s" interval="0s"  on-fail="restart" \
+	   op monitor timeout="60s" interval="4s" on-fail="restart" \
+	   op monitor timeout="60s" interval="3s"  on-fail="restart" role="Master" \
+	   op promote timeout="60s" interval="0s"  on-fail="restart" \
+	   op demote  timeout="60s" interval="0s"  on-fail="stop" \
+	   op stop    timeout="60s" interval="0s"  on-fail="block" \
+	   op notify  timeout="60s" interval="0s"
+	
+	pcs -f pgsql_cfg resource master msPostgresql pgsql \
+	   master-max=1 master-node-max=1 clone-node-max=1 notify=true \
+	   migration-threshold="3" target-role="Master"
+	
+	pcs -f pgsql_cfg constraint colocation add vip-master with Master msPostgresql INFINITY
+	pcs -f pgsql_cfg constraint order promote msPostgresql then start vip-master symmetrical=false score=INFINITY
+	pcs -f pgsql_cfg constraint order demote  msPostgresql then stop  vip-master symmetrical=false score=0
+	
+	pcs -f pgsql_cfg constraint colocation add vip-slave with Slave msPostgresql INFINITY
+	pcs -f pgsql_cfg constraint order promote  msPostgresql then start vip-slave symmetrical=false score=INFINITY
+	pcs -f pgsql_cfg constraint order stop msPostgresql then stop vip-slave symmetrical=false score=0
+	
+	pcs cluster cib-push pgsql_cfg
+
+确定资源定义后进行配置
+
 	./setup.sh
 
 ## 错误排查
@@ -1078,7 +1145,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 	
 		grep Initiating /var/log/messages 
 	
-	只看查看expgsql RA的输出：
+	只查看expgsql RA的输出：
 	
 		grep expgsql /var/log/messages
 
@@ -1091,7 +1158,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
 	cls_cleanup
 
-大部分情况，cleanup就可以找到Master。如果不成功，再采用下面的方法
+大部分情况，cleanup就可以找到Master。而且应该首先使用cleanup。如果不成功，再采用下面的方法
 
 #### 方法2：人工修复复制关系
 1. 将资源脱离集群管理
@@ -1121,12 +1188,18 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 如果不指定master，并且PostgreSQL进程是活动的，通过当前PostgreSQL进程的主备关系决定谁是master。
 如果当前没有处于主的PostgreSQL进程，通过比较xlog位置确定谁作为master。
 
+在PostgreSQL服务启动期间，正常情况下，执行setup.sh不会使服务停止。
+
 setup.sh还可以完全取代前面的cls_reset_master。
 
 ### fail-count的清除
 如果某个节点上有资源的fail-count不为0，最好将其清除，即使当前资源是健康的。
 
 	cls_cleanup
+
+## 注意事项
+1. ./setup.sh会清除CIB，对Pacemaker资源定义的修改应该写到config.pcs里，防止下次执行setup.sh丢失。
+2. 有些包装后的脚本容易超时，比如cls_rebuild_slave。此时可能执行还没有完成的，需要通过cls_status或日志进行确认。
 
  
 ## 附录1：对pgsql RA的修改
