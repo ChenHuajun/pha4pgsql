@@ -1054,7 +1054,7 @@ pgsql_replication_monitor() {
         
         #check repl_info for the master
         repl_info_master=`$CRM_ATTR_REPL_INFO -G -q 2>/dev/null | awk -F'|' '{print $1}'`
-        if [ "$repl_info_master" != "$NODENAME" ]; then
+        if [ -n "$repl_info_master" -a "$repl_info_master" != "$NODENAME" ]; then
             ocf_exit_reason "Only $repl_info_master could be in production mode, $NODENAME should be in recovery."
             return $OCF_ERR_GENERIC
         fi
@@ -1077,6 +1077,13 @@ pgsql_replication_monitor() {
             RE_CONTROL_SLAVE="none"
             control_slave_status || return $OCF_ERR_GENERIC
         fi
+        
+        #set repl_info if needed
+        repl_info_tli=`$CRM_ATTR_REPL_INFO -G -q 2>/dev/null | awk -F'|' '{print $2}'`
+        if [ -z "$repl_info_tli" ]; then
+            update_repl_info || return $OCF_ERR_GENERIC
+        fi
+        
         return $rc
     fi
 
@@ -1089,7 +1096,10 @@ pgsql_replication_monitor() {
         change_pgsql_status "$NODENAME" "HS:alone"
         
         repl_info_master=`$CRM_ATTR_REPL_INFO -G -q 2>/dev/null | awk -F'|' '{print $1}'`
-        if [ -z "$repl_info_master" -o "$OCF_RESKEY_rep_mode" != "sync" ]; then
+        if [ "$repl_info_master" = "$NODENAME" ]; then
+            ocf_log info "I have a master right."
+            exec_with_retry 5 $CRM_MASTER -v $PROMOTE_ME
+        else
             have_master_right
             if [ $? -eq 0 ]; then
                 rm -f ${XLOG_NOTE_FILE}.*
