@@ -9,7 +9,7 @@ if [ -z "${pha4pgsql_dir}" -o -z "${OCF_ROOT}" ]; then
 fi
 
 echo "generate config.pcs..."
-./gencfg.sh
+sh ./gencfg.sh
 if [ $? -ne 0 ]; then
     echo 'failed to execute "gencfg.sh"' >&2
     exit 1
