@@ -31,7 +31,6 @@ fi
 
 for node in $node1 $node2 $node3 $othernodes
 do
-    dead_nodes=""
     is_alive=0
     for alive_node in $MASTER_NODE $SLAVE_NODES
     do
