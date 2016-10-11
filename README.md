@@ -1219,6 +1219,9 @@ promote和monitor的同步复制切换为异步复制前都需要先获取锁，
 
     并且内置了一个基于PostgreSQL的分布式锁实现，即tools\distlock。
 
+    在网络不稳定的极端情况下，主从分区后可能一会只有Master可以连上分布式锁服务，一会只有Slave可以连上分布式锁服务，导致在一个很偶然的小时间窗口内出现双主而且是异步复制，当然这种场景发生的概率极低。
+
+
 2. 根据Master是否发生变更动态采取restart或pg_ctl promote的方式提升Slave为Master。    
 	当Master发生变更时采用pg_ctl promote的方式提升Slave为Master；未发生变更时采用restart的方式提升。
 	相应地废弃原pgsql RA的restart_on_promote参数。

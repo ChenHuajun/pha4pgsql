@@ -739,7 +739,7 @@ pgsql_promote() {
         distlock_lock
         if [ $? -ne 0 ]; then
             ocf_exit_reason "Can't obtain distributed lock on promote."
-            return $OCF_ERR_GENERIC
+            return $OCF_ERR_INSTALLED
         fi
     fi
     
@@ -1310,6 +1310,9 @@ control_slave_status() {
                 change_master_score "$target" "$CAN_NOT_PROMOTE"
                 if [ "$OCF_RESKEY_rep_mode" = "sync" ]; then
                     set_async_mode "$target"
+                    if [ $? -ne 0 ]; then
+                      return 1
+                    fi
                 fi
                 ;;
             *)
@@ -1326,6 +1329,9 @@ control_slave_status() {
                 change_master_score "$target" "$CAN_NOT_PROMOTE"
                 if [ "$OCF_RESKEY_rep_mode" = "sync" ]; then
                     set_async_mode "$target"
+                    if [ $? -ne 0 ]; then
+                      return 1
+                    fi
                 fi
                 change_pgsql_status "$target" "HS:connected"
                 ;;
@@ -1664,6 +1670,14 @@ set_async_mode() {
     cat $REP_MODE_CONF |  grep -q -e "[,' ]$1[,' ]"
     if [ $? -eq 0 ]; then
         ocf_log info "Setup $1 into async mode."
+        #Relet distributed lock
+        if ocf_is_true ${OCF_RESKEY_enable_distlock}; then
+            distlock_lock
+            if [ $? -ne 0 ]; then
+                ocf_exit_reason "Can't relet distributed lock."
+                return 1
+            fi
+        fi
         runasowner -q err "echo \"synchronous_standby_names = ''\" > \"$REP_MODE_CONF\""
     else
         ocf_log debug "$1 is already in async mode."
