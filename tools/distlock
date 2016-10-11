@@ -2,16 +2,19 @@
 
 usage() {
     cat <<EOF
-Usage: $0 <psql_cmd> trylock|lock|unlock <lockpath(table:lockname)> <owner> [expired_time [timeout] ]
+Usage: $0 <psql_cmd> trylock|lock|unlock|update_allow_failover lockpath(table:lockname)> <owner> [Options]
+Options：
+     trylock <lockpath(table:lockname)> <owner> <expired_time> [allow_failover|true|false]
+     lock <lockpath(table:lockname)> <owner> <expired_time> <timeout> [allow_failover|true|false]
 Display 1 if successed, 0 if not. 
 
 Examples:
 
-trylock: Obtain a lock if available, and set the expired time to 10 seconds.
-	distlock 'psql -hlocalhost -Upostgres' trylock distlock:1 node1 10
+trylock: Obtain a lock if available, and set the expired time to 10 seconds. And allow_failover=true.
+	distlock 'psql -hlocalhost -Upostgres' trylock distlock:1 node1 10 true
 
-lock: Obtain a lock, and set the expired time to 10 seconds. The timeout is 15 seconds.
-	distlock 'psql -hlocalhost -Upostgres' lock distlock:1 node1 10 15
+lock: Obtain a lock, and set the expired time to 10 seconds. The timeout is 15 seconds. And allow_failover=false.
+	distlock 'psql -hlocalhost -Upostgres' lock distlock:1 node1 10 15 false
 	
 unlock: Release a lock.
 	distlock 'psql -hlocalhost -Upostgres' unlock distlock:1 node1
@@ -51,7 +54,11 @@ trylock() {
 		exit 1
 	fi
 
-	output=`echo $PSQL -tA -c \""update $table set owner='$owner',ts=now(),expired_time=interval '$expired_time second' where lockname='$lockname' and (owner = '$owner' or owner = '' or now() > ts + expired_time)"\" | sh`
+	if [ -z "$allow_failover" ]; then
+		allow_failover=false
+	fi
+
+	output=`echo $PSQL -tA -c \""update $table set owner='$owner',ts=now(),expired_time=interval '$expired_time second',allow_failover=$allow_failover where lockname='$lockname' and (owner = '$owner' or owner = '' or (allow_failover and now() > ts + expired_time))"\" | sh`
 	if [ $? -ne 0 ];then
 		if [ -n "$output" ];then
 			echo "$output" >&2
@@ -84,6 +91,10 @@ lock() {
 		timeout=2147483647
 	fi
 	
+	if [ -z "$allow_failover" ]; then
+		allow_failover=false
+	fi
+
 	start=`date +%s`
     expire=`expr $timeout + $start`
     
@@ -123,7 +134,6 @@ table=${lockpath%%:*}
 lockname=${lockpath#*:}
 owner=$4
 expired_time=$5
-timeout="$6"
 
 PSQL="$psql_cmd"
 
@@ -133,9 +143,12 @@ if [ -z "$table" -o -z "$lockname" -o -z "$owner" ]; then
 fi
 
 case "$operate" in
-    trylock)    trylock
+    trylock)    allow_failover=$6
+                trylock
                 exit $?;;
-    lock)       lock
+    lock)       timeout="$6"
+                allow_failover=$7
+                lock
                 exit $?;;
 	unlock)     unlock
                 exit $?;;

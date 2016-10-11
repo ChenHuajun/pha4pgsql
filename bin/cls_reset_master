@@ -33,6 +33,16 @@ if [ -n "$MASTER_NODE" ]; then
     exit 10
 fi
 
+#Release distributed lock
+if [ "$pgsql_enable_distlock" = "true" ]; then
+    echo "release distributed lock..."
+    echo $pgsql_distlock_psql_cmd -c '"' "update distlock set owner='' where lockname='$pgsql_distlock_lockname'" '"'| tr -d '\\' | sh
+    if [ $? -ne 0 ]; then
+        echo 'failed to release distributed lock' >&2
+        #exit 1
+    fi
+fi
+
 ./cls_stop
 
 # clear pgsql-data-status attribute from all node

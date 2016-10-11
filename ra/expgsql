@@ -736,10 +736,10 @@ pgsql_promote() {
     #Obtain distributed lock
     if ocf_is_true ${OCF_RESKEY_enable_distlock}; then
         ocf_log info "Obtaining distributed lock."
-        distlock_lock
+        distlock_lock false
         if [ $? -ne 0 ]; then
             ocf_exit_reason "Can't obtain distributed lock on promote."
-            return $OCF_ERR_GENERIC
+            return $OCF_ERR_INSTALLED
         fi
     fi
     
@@ -824,6 +824,7 @@ pgsql_demote() {
         rc=$?
         if [ "$rc" -ne "$OCF_SUCCESS" ]; then
             change_pgsql_status "$NODENAME" "UNKNOWN"
+            #Release distributed lock
             if ocf_is_true ${OCF_RESKEY_enable_distlock}; then
                 distlock_unlock
             fi
@@ -1067,13 +1068,14 @@ pgsql_replication_monitor() {
         
         #Relet distributed lock
         if ocf_is_true ${OCF_RESKEY_enable_distlock}; then
-            distlock_lock
+            #keep current allow_failover value
+            distlock_lock allow_failover
             if [ $? -ne 0 ]; then
                 ocf_exit_reason "Can't relet distributed lock."
                 return $OCF_ERR_GENERIC
             fi
         fi
-        
+
         change_data_status "$NODENAME" "LATEST"
         change_pgsql_status "$NODENAME" "PRI"
         control_slave_status || return $OCF_ERR_GENERIC
@@ -1082,6 +1084,14 @@ pgsql_replication_monitor() {
             ocf_log info "re-controlling slave status."
             RE_CONTROL_SLAVE="none"
             control_slave_status || return $OCF_ERR_GENERIC
+        fi
+        #Relet distributed lock
+        if ocf_is_true ${OCF_RESKEY_enable_distlock}; then
+            distlock_lock $IN_SYNC_REPL
+            if [ $? -ne 0 ]; then
+                ocf_exit_reason "Can't relet distributed lock."
+                return $OCF_ERR_GENERIC
+            fi
         fi
         
         #set repl_info if needed
@@ -1252,6 +1262,7 @@ control_slave_status() {
         return 1
     fi
 
+    IN_SYNC_REPL=false
     number_of_nodes=`echo $NODE_LIST | wc -w`
     for target in $NODE_LIST; do
         if [ "$target" = "$NODENAME" ]; then
@@ -1275,6 +1286,7 @@ control_slave_status() {
                 change_data_status "$target" "$data_status"
                 change_master_score "$target" "$CAN_PROMOTE"
                 change_pgsql_status "$target" "HS:sync"
+                IN_SYNC_REPL=true
                 ;;
             "STREAMING|ASYNC")
                 change_data_status "$target" "$data_status"
@@ -1297,35 +1309,23 @@ control_slave_status() {
                 change_pgsql_status "$target" "HS:potential"
                 ;;
             "DISCONNECT")
-                # Check if could get distributed lock
-                if ocf_is_true ${OCF_RESKEY_enable_distlock}; then
-                    distlock_lock
-                    if [ $? -ne 0 ]; then
-                        ocf_exit_reason "Can't relet distributed lock."
-                        return $OCF_ERR_GENERIC
-                    fi
-                fi
-                
                 change_data_status "$target" "$data_status"
                 change_master_score "$target" "$CAN_NOT_PROMOTE"
                 if [ "$OCF_RESKEY_rep_mode" = "sync" ]; then
                     set_async_mode "$target"
+                    if [ $? -ne 0 ]; then
+                        return 1
+                    fi
                 fi
                 ;;
             *)
-                # Check if could get distributed lock
-                if ocf_is_true ${OCF_RESKEY_enable_distlock}; then
-                    distlock_lock
-                    if [ $? -ne 0 ]; then
-                        ocf_exit_reason "Can't relet distributed lock."
-                        return $OCF_ERR_GENERIC
-                    fi
-                fi
-                
                 change_data_status "$target" "$data_status"
                 change_master_score "$target" "$CAN_NOT_PROMOTE"
                 if [ "$OCF_RESKEY_rep_mode" = "sync" ]; then
                     set_async_mode "$target"
+                    if [ $? -ne 0 ]; then
+                        return 1
+                    fi
                 fi
                 change_pgsql_status "$target" "HS:connected"
                 ;;
@@ -1664,6 +1664,15 @@ set_async_mode() {
     cat $REP_MODE_CONF |  grep -q -e "[,' ]$1[,' ]"
     if [ $? -eq 0 ]; then
         ocf_log info "Setup $1 into async mode."
+
+        # Check if could get distributed lock
+        if ocf_is_true ${OCF_RESKEY_enable_distlock}; then
+            distlock_lock false
+            if [ $? -ne 0 ]; then
+                ocf_exit_reason "Can't relet distributed lock."
+                return 1
+            fi
+        fi
         runasowner -q err "echo \"synchronous_standby_names = ''\" > \"$REP_MODE_CONF\""
     else
         ocf_log debug "$1 is already in async mode."
@@ -2180,9 +2189,14 @@ print_crm_mon() {
 
 distlock_lock() {
 
+    allow_failover=$1
+    if [ -z "$allow_failover" ]; then
+      allow_failover=false
+    fi
+
     cmd="${OCF_RESKEY_distlock_lock_cmd//@owner/${RESOURCE_NAME}_${NODENAME}}"
 
-    output=`echo "$cmd" | sh`
+    output=`echo "$cmd $allow_failover" | sh`
     if [ $? -eq 0 ]; then
         if [ "$output" = "1" ]; then
             return 0

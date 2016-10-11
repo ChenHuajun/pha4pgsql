@@ -247,28 +247,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
 分布式锁服务通过HA集群外部的另外一个PostgreSQL服务实现。需要事先创建锁表。
 
-	create table if not exists distlock(lockname text primary key,owner text not null,ts timestamptz not null,expired_time interval not null);
-
-可选地，可以创建锁的历史表，每次锁的owner变更(主从角色切换)都会记录到历史表(distlock_history)中。
-
-	create table if not exists distlock_history(id serial primary key,lockname text not null,owner text not null,ts timestamptz not null,expired_time interval not null);
-	
-	CREATE OR REPLACE FUNCTION distlock_log_update() RETURNS trigger AS $$
-	    BEGIN
-	    
-	        IF TG_OP = 'INSERT' or NEW.owner <> OLD.owner THEN
-	            INSERT INTO distlock_history(lockname, owner, ts, expired_time) values(NEW.lockname, NEW.owner, NEW.ts, NEW.expired_time);
-	        END IF;
-	        RETURN NEW;
-	    END;
-	$$ LANGUAGE plpgsql;
-
-
-	DROP TRIGGER IF EXISTS distlock_log_update ON distlock;
-	
-	CREATE TRIGGER distlock_log_update AFTER INSERT OR UPDATE ON distlock
-	    FOR EACH ROW EXECUTE PROCEDURE distlock_log_update();
-
+	psql -f pha4pgsql/tools/distlock_ddl.sql
 
 ### 安装和配置pha4pgsql
 在任意一个节点上执行:
@@ -1218,6 +1197,9 @@ promote和monitor的同步复制切换为异步复制前都需要先获取锁，
 		无法访问分布式锁服务时，需要做二次检查的节点列表，通过ssh连接到这些节点后再获取锁。如果节点列表中所有节点都无法访问分布式锁服务，认为分布式锁服务失效，按已获得锁处理。如果节点列表中任何一个节点本身无法访问，按未获得锁处理。
 
     并且内置了一个基于PostgreSQL的分布式锁实现，即tools\distlock。
+
+在网络不稳定的极端情况下，主从分区后可能一会只有Master可以连上分布式锁服务，一会只有Slave可以连上分布式锁服务，导致在一个很偶然的小时间窗口内出现双主而且是异步复制，当然这种场景发生的概率极低。作为改进在分布式锁服务中记录当前的复制状态是同步复制还是异步复制，异步复制下不允许发生failover。具体做法为:
+promote时设置allow_failover为false;有Slave处于STREAMING|ASYNC状态时设置allow_failover为true否则为false；同步降级为异步前再次设置allow_failover为false。
 
 2. 根据Master是否发生变更动态采取restart或pg_ctl promote的方式提升Slave为Master。    
 	当Master发生变更时采用pg_ctl promote的方式提升Slave为Master；未发生变更时采用restart的方式提升。
