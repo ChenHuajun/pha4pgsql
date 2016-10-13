@@ -60,10 +60,10 @@
    通过pg_rewind修复当前节点，主要用于旧Master的修复，回退超出时间线分叉点的那部分更新，并和新Master建立复制关系。pg_rewind仅在PostgreSQL 9.5以上版本提供
 9. cls_rebuild_slave   
    通过pg_basebackup在当前节点重建Slave。执行该命令前需要停止当前节点上的PostgreSQL进程并清空旧的数据目录。
-10. cls_unmanage   
-   unmanage所有资源使其脱离Pacemaker的控制。当需要重启Pacemaker和Corosync又不能停止PostgreSQL服务时，可以先调用这个命令，Pacemaker和Corosync重启完成后再用cls_manage恢复管理。
-11. cls_manage   
-   恢复cls_unmanage产生的资源unmanaged状态。
+10. cls_maintenance  
+   切换集群到维护模式使所有资源脱离Pacemaker的控制。当需要重启Pacemaker和Corosync又不能停止PostgreSQL服务时，可以先调用这个命令，Pacemaker和Corosync重启完成后再调用用cls_unmaintenance恢复为普通模式。
+11. cls_unmaintenance  
+   从维护模式恢复到普通模式。
 12. cls_maintenance_node <nodename> 
    使节点进入维护模式。维护模式和unmanage resource相比的区别是会取消monitor，比unmanage更彻底。
 13. cls_unmaintenance_node <nodename> 

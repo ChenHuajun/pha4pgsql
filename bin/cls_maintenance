@@ -1,11 +1,10 @@
 #!/bin/bash
 
 ###########################################################
-#unmanage_all_resources.sh
-#InPut:无
-#OutPut:无
+#cls_maintenance
+#InPut:none
+#OutPut:none
 #
-#return
 #0  正常
 #1  一般错误
 #101 无法获取crm信息，比如pacemaker,corosync服务未启动(保留)
@@ -15,7 +14,5 @@
 cd $(dirname "$0")
 . ../lib/common.sh
 
-
-# unmanage all resources
-# manage all resource
-pcs resource unmanage $RESOURCE_LIST
+# switch to maintenance mode
+pcs property set maintenance-mode=true
