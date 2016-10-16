@@ -1,0 +1,98 @@
+
+pcs cluster cib pgsql_cfg
+
+pcs -f pgsql_cfg property set no-quorum-policy="stop"
+pcs -f pgsql_cfg property set stonith-enabled="false"
+pcs -f pgsql_cfg resource defaults resource-stickiness="1"
+pcs -f pgsql_cfg resource defaults migration-threshold="10"
+
+pcs -f pgsql_cfg resource create vip-master IPaddr2 \
+   ip="${writer_vip}" \
+   nic="${vip_nic}" \
+   cidr_netmask="${vip_cidr_netmask}" \
+   op start   timeout="60s" interval="0s"  on-fail="restart" \
+   op monitor timeout="60s" interval="10s" on-fail="restart" \
+   op stop    timeout="60s" interval="0s"  on-fail="block"
+
+pcs -f pgsql_cfg resource create vip-slave IPaddr2 \
+   ip="${reader_vip}" \
+   nic="${vip_nic}" \
+   cidr_netmask="${vip_cidr_netmask}" \
+   op start   timeout="60s" interval="0s"  on-fail="restart" \
+   op monitor timeout="60s" interval="10s" on-fail="restart" \
+   op stop    timeout="60s" interval="0s"  on-fail="block"
+
+pcs -f pgsql_cfg resource create pgsql expgsql \
+   pgctl="${pgsql_pgctl}" \
+   psql="${pgsql_psql}" \
+   pgdata="${pgsql_pgdata}" \
+   pgport="${pgsql_pgport}" \
+   rep_mode="sync" \
+   node_list="${node1} ${node2} ${node3} ${othernodes}" \
+   restore_command="${pgsql_restore_command}" \
+   primary_conninfo_opt="user=${pgsql_repuser} password=${pgsql_reppassord} keepalives_idle=60 keepalives_interval=5 keepalives_count=5" \
+   master_ip="${writer_vip}" \
+   restart_on_promote="false" \
+   synchronous_standby_names="${node1},${node2},${node3}" \
+   socketdir="" \
+   op start   timeout="60s" interval="0s"  on-fail="restart" \
+   op monitor timeout="60s" interval="4s" on-fail="restart" \
+   op monitor timeout="60s" interval="3s"  on-fail="restart" role="Master" \
+   op promote timeout="60s" interval="0s"  on-fail="restart" \
+   op demote  timeout="60s" interval="0s"  on-fail="stop" \
+   op stop    timeout="60s" interval="0s"  on-fail="block" \
+   op notify  timeout="60s" interval="0s"
+
+pcs -f pgsql_cfg resource master msPostgresql pgsql \
+   master-max=1 master-node-max=1 clone-node-max=1 notify=true \
+   migration-threshold="3" target-role="Master"
+
+pcs -f pgsql_cfg constraint colocation add vip-master with Master msPostgresql INFINITY
+pcs -f pgsql_cfg constraint order promote msPostgresql then start vip-master symmetrical=false score=INFINITY
+pcs -f pgsql_cfg constraint order demote  msPostgresql then stop  vip-master symmetrical=false score=0
+
+pcs -f pgsql_cfg constraint colocation add vip-slave with Slave msPostgresql INFINITY
+pcs -f pgsql_cfg constraint order promote  msPostgresql then start vip-slave symmetrical=false score=INFINITY
+pcs -f pgsql_cfg constraint order stop msPostgresql then stop vip-slave symmetrical=false score=0
+
+if [ "${enable_lvs}" = "true" ]; then
+
+   pcs -f pgsql_cfg resource create lvsdr lvsdr \
+      vip="${reader_vip}" \
+      port="${pgsql_pgport}" \
+      realserver_dependent_resource="lvsdr-realsvr-clone" \
+      realserver_dependent_attribute_name="pgsql-status" \
+      realserver_dependent_attribute_value="HS:sync|HS:potential|HS:async" \
+      virtual_service_options="-s rr" \
+      op start   timeout="60s" interval="0s"  on-fail="restart" \
+      op monitor timeout="30s" interval="5s" on-fail="restart" \
+      op stop    timeout="60s" interval="0s"  on-fail="block"
+
+   pcs -f pgsql_cfg resource create lvsdr-realsvr lvsdr-realsvr \
+      vip="${reader_vip}" \
+      nic_lo="lo:0" \
+      op start   timeout="60s" interval="0s"  on-fail="restart" \
+      op monitor timeout="30s" interval="60s" on-fail="restart" \
+      op stop    timeout="60s" interval="0s"  on-fail="block"
+
+   pcs -f pgsql_cfg resource clone lvsdr-realsvr clone-node-max=1 notify=false
+
+   pcs -f pgsql_cfg constraint location msPostgresql \
+           rule id="loc-pgsql-master-rule" role="master" score=-INFINITY \#uname ne ${node1} and \#uname ne ${node2} and \#uname ne ${node3}
+   pcs -f pgsql_cfg constraint location msPostgresql \
+           rule id="loc-pgsql-master-2-rule" role="master" score=10000 \#uname eq ${node1} or \#uname eq ${node2} or \#uname eq ${node3}
+
+   pcs -f pgsql_cfg constraint colocation add lvsdr with vip-slave INFINITY
+   pcs -f pgsql_cfg constraint colocation add lvsdr-realsvr-clone with Slave msPostgresql INFINITY
+
+   pcs -f pgsql_cfg constraint order stop vip-slave then start vip-slave symmetrical=false score=0
+   pcs -f pgsql_cfg constraint order stop vip-master then start vip-master symmetrical=false score=0
+   pcs -f pgsql_cfg constraint order start lvsdr-realsvr-clone then start lvsdr symmetrical=false score=0
+   pcs -f pgsql_cfg constraint order start lvsdr then start vip-slave symmetrical=false score=0
+
+else
+
+   pcs -f pgsql_cfg constraint location  vip-slave rule id="loc-vip-slave-rule" score=1000 master-pgsql eq "HS:sync"
+
+fi
+pcs cluster cib-push pgsql_cfg

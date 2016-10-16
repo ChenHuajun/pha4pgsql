@@ -1,0 +1,374 @@
+#!/bin/sh
+#
+#
+# Resource Agent script for LVS(DR)
+#
+# Authors:  Chen Huajun
+#
+#######################################################################
+# Initialization:
+
+: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
+. ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+
+#######################################################################
+
+OCF_RESKEY_realserver_dependent_resource_default="clone-lvsdr-realsvr"
+OCF_RESKEY_realserver_dependent_attribute_name_default="readable"
+OCF_RESKEY_realserver_dependent_attribute_value_default="1"
+OCF_RESKEY_virtual_service_options_default="-s rr"
+OCF_RESKEY_default_weight_default="1"
+
+: ${OCF_RESKEY_realserver_dependent_resource=${OCF_RESKEY_realserver_dependent_resource_default}}
+: ${OCF_RESKEY_realserver_dependent_attribute_name=${OCF_RESKEY_realserver_dependent_attribute_name_default}}
+: ${OCF_RESKEY_realserver_dependent_attribute_value=${OCF_RESKEY_realserver_dependent_attribute_value_default}}
+: ${OCF_RESKEY_virtual_service_options=${OCF_RESKEY_virtual_service_options_default}}
+: ${OCF_RESKEY_default_weight=${OCF_RESKEY_default_weight_default}}
+
+#######################################################################
+# Convenience variables
+
+CRM_RESOURCE="${HA_SBIN_DIR}/crm_resource"
+CRM_NODE="${HA_SBIN_DIR}/crm_node"
+CRM_ATTRIBUTE="${HA_SBIN_DIR}/crm_attribute"
+
+#######################################################################
+# update heatbeat file for purpose of monitoring
+
+if [ -n "$OCF_RESKEY_heatbeat_file" ];then
+	echo "$(date +%s)" >$OCF_RESKEY_heatbeat_file
+fi
+
+#######################################################################
+
+meta_data() {
+	cat <<END
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="lvsdr" version="0.9">
+<version>1.0</version>
+
+<longdesc lang="en">
+Resource Agent script for LVS(DR). 
+#Currently only one lvsdr RA is allowed within a cluster.
+</longdesc>
+<shortdesc lang="en">Resource Agent script for LVS(DR)</shortdesc>
+
+<parameters>
+<parameter name="vip" unique="1"  required="1">
+<longdesc lang="en">
+Vitrual IP for virtual service.
+</longdesc>
+<shortdesc lang="en">Vitrual IP for virtual service</shortdesc>
+<content type="string" />
+</parameter>
+
+<parameter name="port" unique="0"  required="1">
+<longdesc lang="en">
+Port for virtual service.
+</longdesc>
+<shortdesc lang="en">Port for virtual service</shortdesc>
+<content type="integer" />
+</parameter>
+
+<parameter name="virtual_service_options" unique="0"  required="0">
+<longdesc lang="en">
+Additional virtual service options for ipvsadm -A,such as "-s rr".
+</longdesc>
+<shortdesc lang="en">Additional virtual service options</shortdesc>
+<content type="string" default="${OCF_RESKEY_virtual_service_options_default}" />
+</parameter>
+
+<parameter name="default_weight" unique="0"  required="0">
+<longdesc lang="en">
+Default weight of real server.
+</longdesc>
+<shortdesc lang="en">Default weight of real server</shortdesc>
+<content type="string" default="${OCF_RESKEY_default_weight_default}" />
+</parameter>
+
+<parameter name="weight_of_realservers" unique="0"  required="0">
+<longdesc lang="en">
+Weight define of real servers in form of "node1,weight1 node2,weight2 ...".
+Real servers without weight definition will use the value of default_weight .
+The "node1" must be the hostname of this node. 
+</longdesc>
+<shortdesc lang="en">weight define of real servers</shortdesc>
+<content type="string" />
+</parameter>
+
+<parameter name="heatbeat_file" unique="0" required="0">
+<longdesc lang="en">
+File to record timestamp of last activity of this resource agent for purpose of monitoring. 
+If heatbeat_file be setted, write seconds since 1970-01-01 00:00:00 UTC to heatbeat_file 
+every time this resource agent be invoked.
+</longdesc>
+<shortdesc lang="en">file to record timestamp of last activity of this resource agent for purpose of monitoring</shortdesc>
+<content type="string" />
+</parameter>
+
+<parameter name="realserver_dependent_resource" unique="0" required="0">
+<longdesc lang="en">
+The dependent resource for a node to become a real server.
+If this is setted to "", all node will become a candidate real server. 
+</longdesc>
+<shortdesc lang="en">The dependent resource for a node to become a real server</shortdesc>
+<content type="string"  default="${OCF_RESKEY_realserver_dependent_resource_default}" />
+</parameter>
+
+<parameter name="realserver_dependent_attribute_name" unique="0" required="0">
+<longdesc lang="en">
+An node attribute that indicate whether a node can become a real server.
+If this is setted to "", all node will become a candidate real server. 
+</longdesc>
+<shortdesc lang="en">An node attribute that indicate whether a node can become a real server</shortdesc>
+<content type="string"  default="${OCF_RESKEY_realserver_dependent_attribute_name_default}" />
+</parameter>
+
+<parameter name="realserver_dependent_attribute_value" unique="0" required="0">
+<longdesc lang="en">
+The expect attribute value for a node which can become a real server.
+The value can be a regular expression, such as "HS.sync|HA:async".
+</longdesc>
+<shortdesc lang="en">The expect attribute value for a node which can become a real server</shortdesc>
+<content type="string"  default="${realserver_dependent_attribute_value_default}" />
+</parameter>
+
+</parameters>
+
+<actions>
+<action name="start"        timeout="20" />
+<action name="stop"         timeout="20" />
+<action name="monitor"      timeout="20" interval="10" depth="0" />
+<action name="meta-data"    timeout="5" />
+<action name="validate-all"   timeout="20" />
+</actions>
+</resource-agent>
+END
+}
+
+#######################################################################
+
+lvsdr_usage() {
+	cat <<END
+usage: $0 {start|stop|monitor|validate-all|meta-data}
+
+END
+}
+
+# get weight of specified real server from ${OCF_RESKEY_weight_of_realservers}
+# arg1: nodename of real server
+get_weight() {
+    target=$1
+
+    for node_weight in ${OCF_RESKEY_weight_of_realservers} ; do
+        arr2=(${node_weight//,/ })
+        realserver=${arr2[0]}
+        weight=${arr2[1]}
+        if [ -z "$weight" ]; then
+            weight="1"
+        fi
+        
+        if [ $target = $realserver ]; then
+            echo "$weight"
+            return
+        fi
+    done
+
+    echo ${OCF_RESKEY_default_weight}
+}
+
+# Update lvs real server list according to real servers's status dynamically
+update_lvs() {
+
+    #1. get lived real server(MySQL slave)
+    if [ -n "${OCF_RESKEY_realserver_dependent_resource}" ]; then
+    #To avoid too many "resource clone-lvsdr-realsvr is NOT running" error message in log, redirect stderr to /dev/null
+        candidate_realservers="$($CRM_RESOURCE --resource ${OCF_RESKEY_realserver_dependent_resource} --locate 2>/dev/null |cut -d" " -f 6|sort|tr '\n' ' ')"
+    else
+        candidate_realservers="$($CRM_NODE -p)"
+    fi
+
+    if [ -n "${OCF_RESKEY_realserver_dependent_attribute_name}" ]; then
+        i=0
+        for realsvr in $candidate_realservers ; do
+            readable="$($CRM_ATTRIBUTE -N "$realsvr" -l reboot -n ${OCF_RESKEY_realserver_dependent_attribute_name} -Qq 2>/dev/null)"
+            echo "$readable"| grep -Ex "${OCF_RESKEY_realserver_dependent_attribute_value}"
+            if [ $? -eq 0 ]; then
+                realsvr_list[$i]="$realsvr"
+                let i+=1
+            fi
+        done
+    else
+        realsvr_list=$candidate_realservers
+    fi
+
+    #update lvs setup according ${realsvr_list[@]}
+    #2. delete invalid real server from LVS virtual service 
+    cur_realservers="$(ipvsadm -L -t ${OCF_RESKEY_vip}:${OCF_RESKEY_port} | grep -v "RemoteAddress" |grep "\->"|cut -d" " -f 4|cut -d":" -f 1)"
+    for realserver in $cur_realservers ; do
+        echo " ${realsvr_list[@]} " | grep -F " $realserver " >/dev/null
+        if [ $? -ne 0 ]; then
+            ipvsadm -d -t ${OCF_RESKEY_vip}:${OCF_RESKEY_port} -r $realserver
+            if [ $? -ne 0 ]; then
+                ocf_exit_reason "fail to delete real server via ipvsadm"
+                return $OCF_ERR_GENERIC
+            fi
+        fi
+    done
+
+    #3. add or update the LVS real server within ${realsvr_list[@]}
+    for realserver in ${realsvr_list[@]}; do    
+        weight="$(get_weight $realserver)"
+        
+        echo "$cur_realservers"|grep -x "$realserver" >/dev/null
+        if [ $? -eq 0 ]; then
+            current_weight="$(ipvsadm -L  -t ${OCF_RESKEY_vip}:${OCF_RESKEY_port} |grep " ${realserver}:" |awk '{print $4}')"
+            if [ $current_weight != $weight ]; then
+                ipvsadm -e -t ${OCF_RESKEY_vip}:${OCF_RESKEY_port} -r $realserver -w $weight
+                if [ $? -ne 0 ]; then
+                    ocf_exit_reason "fail to update real server via ipvsadm"
+                    return $OCF_ERR_GENERIC
+                fi
+            fi
+        else
+            ipvsadm -a -t ${OCF_RESKEY_vip}:${OCF_RESKEY_port} -r $realserver -w $weight
+            if [ $? -ne 0 ]; then
+                ocf_exit_reason "fail to add real server via ipvsadm"
+                return $OCF_ERR_GENERIC
+            fi
+        fi
+    done
+
+}
+
+lvsdr_start() {
+    #lvsdr_monitor
+    #if [ $? =  $OCF_SUCCESS ]; then
+    #    return $OCF_SUCCESS
+    #fi
+	
+    # Since this is the Director we must be able to forward packets
+    echo 1 > /proc/sys/net/ipv4/ip_forward
+    echo 1 > /proc/sys/net/ipv4/vs/expire_nodest_conn
+    
+    # Clear all iptables rules.
+    #iptables -F
+    # Reset iptables counters.
+    #iptables -Z
+    # Clear all ipvsadm rules/services.
+    #ipvsadm -C
+    ipvsadm -D -t ${OCF_RESKEY_vip}:${OCF_RESKEY_port} 2>/dev/null
+     
+    # Add an IP virtual service for VIP ${OCF_RESKEY_vip}:${OCF_RESKEY_port}
+    ipvsadm -A -t ${OCF_RESKEY_vip}:${OCF_RESKEY_port} ${OCF_RESKEY_virtual_service_options}
+    if [ $? -ne 0 ]; then
+        ocf_exit_reason "fail to add virtual server via ipvsadm"
+        return $OCF_ERR_GENERIC
+    fi
+}
+
+lvsdr_stop() {
+    # Stop forwarding packets
+    #echo 0 > /proc/sys/net/ipv4/ip_forward
+    #echo 0 > /proc/sys/net/ipv4/vs/expire_nodest_conn
+    
+    # Reset ipvsadm
+    ipvsadm -D -t ${OCF_RESKEY_vip}:${OCF_RESKEY_port}
+    #ipvsadm -C
+    #if [ $? -ne 0 ]; then
+    #   ocf_exit_reason "fail to clear LVS table via ipvsadm"
+    #   return $OCF_ERR_GENERIC
+    #fi
+    
+    return $OCF_SUCCESS
+}
+
+lvsdr_monitor() {
+	
+    # check virtual server for ${OCF_RESKEY_vip}:${OCF_RESKEY_port} 
+    ipvsadm -L -t ${OCF_RESKEY_vip}:${OCF_RESKEY_port} >/dev/null 2>&1
+    if [ $? -ne 0  ]; then
+        if ocf_is_probe; then
+            ocf_log info "These is no virtual service definition for this virtual servie"
+        else
+            ocf_log err "These is no virtual service definition for this virtual servie"
+        fi
+        return $OCF_NOT_RUNNING
+    fi
+    
+    #update Real Servers 
+    update_lvs
+    if [ $? -ne 0 ]; then
+       return $OCF_ERR_GENERIC
+    fi
+    return $OCF_SUCCESS
+}
+
+lvsdr_validate() {
+    return $OCF_SUCCESS
+}
+
+##########################################################################
+# If DEBUG_LOG is set, make this resource agent easy to debug: set up the
+# debug log and direct all output to it.  Otherwise, redirect to /dev/null.
+# The log directory must be a directory owned by root, with permissions 0700,
+# and the log must be writable and not a symlink.
+##########################################################################
+DEBUG_LOG="/tmp/lvsdr.ocf.ra.debug/log"
+if [ "${DEBUG_LOG}" -a -w "${DEBUG_LOG}" -a ! -L "${DEBUG_LOG}" ]; then
+    DEBUG_LOG_DIR="${DEBUG_LOG%/*}"
+    if [ -d "${DEBUG_LOG_DIR}" ]; then
+        exec 9>>"$DEBUG_LOG"
+        exec 2>&9
+        date >&9
+        echo "$*" >&9
+        env | grep OCF_ | sort >&9
+        set -x
+    else
+        exec 9>/dev/null
+    fi
+fi
+
+# Set debug log output
+case "$1" in
+    start|stop|promote|demote)
+        write_log="Yes"
+        ;;
+    monitor)
+        if ocf_is_probe; then
+            write_log="Yes"
+        fi
+        ;;
+    *)
+        write_log="No"
+        ;;
+esac
+
+if [ "$write_log" = "Yes" ]; then
+    ocf_log info "##### ${OCF_RESOURCE_TYPE}(${OCF_RESOURCE_INSTANCE}):${__OCF_ACTION} begin"
+fi
+
+case $__OCF_ACTION in
+meta-data)	meta_data
+		exit $OCF_SUCCESS
+		;;
+start)		lvsdr_start;;
+stop)		lvsdr_stop;;
+monitor)	lvsdr_monitor;;
+validate-all)	lvsdr_validate;;
+usage|help)	lvsdr_usage
+		exit $OCF_SUCCESS
+		;;
+*)		lvsdr_usage
+		exit $OCF_ERR_UNIMPLEMENTED
+		;;
+esac
+rc=$?
+
+if [ "$write_log" = "Yes" ]; then
+    ocf_log info "##### ${OCF_RESOURCE_TYPE}(${OCF_RESOURCE_INSTANCE}):${__OCF_ACTION} end (rc=$rc)"
+fi
+
+exit $rc
+

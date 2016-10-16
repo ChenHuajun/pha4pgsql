@@ -74,6 +74,7 @@ OCF_RESKEY_xlog_check_count_default="3"
 OCF_RESKEY_crm_attr_timeout_default="5"
 OCF_RESKEY_stop_escalate_in_slave_default=90
 OCF_RESKEY_replication_slot_name_default=""
+OCF_RESKEY_synchronous_standby_names_default=""
 # Defaults for distributed lock
 OCF_RESKEY_enable_distlock_default="false"
 OCF_RESKEY_distlock_lock_cmd_default=""
@@ -113,6 +114,7 @@ OCF_RESKEY_distlock_lockservice_deadcheck_nodelist_default=""
 : ${OCF_RESKEY_crm_attr_timeout=${OCF_RESKEY_crm_attr_timeout_default}}
 : ${OCF_RESKEY_stop_escalate_in_slave=${OCF_RESKEY_stop_escalate_in_slave_default}}
 : ${OCF_RESKEY_replication_slot_name=${OCF_RESKEY_replication_slot_name_default}}
+: ${OCF_RESKEY_synchronous_standby_names=${OCF_RESKEY_synchronous_standby_names_default}}
 
 # for distributed lock
 : ${OCF_RESKEY_enable_distlock=${OCF_RESKEY_enable_distlock_default}}
@@ -459,6 +461,15 @@ wal receiver is not running in the master and the attribute shows status as
 <content type="boolean" default="${OCF_RESKEY_check_wal_receiver_default}" />
 </parameter>
 
+<parameter name="synchronous_standby_names" unique="0" required="0">
+<longdesc lang="en">
+Fixed value of synchronous_standby_names.
+If is empty,the value will be setted dynamically as before.
+</longdesc>
+<shortdesc lang="en">synchronous_standby_names</shortdesc>
+<content type="boolean" default="${OCF_RESKEY_synchronous_standby_names_default}" />
+</parameter>
+
 <parameter name="enable_distlock" unique="0" required="0">
 <longdesc lang="en">
 enable distributed lock to guard against split-brain.
@@ -686,8 +697,14 @@ pgsql_replication_start() {
     delete_master_baseline
     exec_with_retry 0 $CRM_MASTER -v $CAN_NOT_PROMOTE
     rm -f ${XLOG_NOTE_FILE}.* $REP_MODE_CONF $RECOVERY_CONF
-    if ! make_recovery_conf || ! delete_xlog_location || ! set_async_mode_all; then
+    if ! make_recovery_conf || ! delete_xlog_location; then
         return $OCF_ERR_GENERIC
+    fi
+
+    if [ -z "$OCF_RESKEY_synchronous_standby_names" ]; then
+      set_async_mode_all || return $OCF_ERR_GENERIC
+    else
+      set_sync_mode_all || return $OCF_ERR_GENERIC
     fi
 
 #remove $PGSQL_LOCK check
@@ -934,7 +951,9 @@ pgsql_replication_stop() {
     fi
 
     change_pgsql_status "$NODENAME" "STOP"
-    set_async_mode_all
+    if [ -z "$OCF_RESKEY_synchronous_standby_names" ]; then
+      set_async_mode_all
+    fi
     delete_master_baseline
     return $OCF_SUCCESS
 }
@@ -1280,7 +1299,9 @@ control_slave_status() {
                 change_data_status "$target" "$data_status"
                 if [ "$OCF_RESKEY_rep_mode" = "sync" ]; then
                     change_master_score "$target" "$CAN_NOT_PROMOTE"
-                    set_sync_mode "$target"
+                    if [ -z "$OCF_RESKEY_synchronous_standby_names" ]; then
+                      set_sync_mode "$target"
+                    fi
                 else
                     if [ $number_of_nodes -le 2 ]; then
                         change_master_score "$target" "$CAN_PROMOTE"
@@ -1309,10 +1330,12 @@ control_slave_status() {
                 change_data_status "$target" "$data_status"
                 change_master_score "$target" "$CAN_NOT_PROMOTE"
                 if [ "$OCF_RESKEY_rep_mode" = "sync" ]; then
+                  if [ -z "$OCF_RESKEY_synchronous_standby_names" ]; then
                     set_async_mode "$target"
                     if [ $? -ne 0 ]; then
                       return 1
                     fi
+                  fi
                 fi
                 ;;
             *)
@@ -1328,10 +1351,12 @@ control_slave_status() {
                 change_data_status "$target" "$data_status"
                 change_master_score "$target" "$CAN_NOT_PROMOTE"
                 if [ "$OCF_RESKEY_rep_mode" = "sync" ]; then
+                  if [ -z "$OCF_RESKEY_synchronous_standby_names" ]; then
                     set_async_mode "$target"
                     if [ $? -ne 0 ]; then
                       return 1
                     fi
+                  fi
                 fi
                 change_pgsql_status "$target" "HS:connected"
                 ;;
@@ -1653,6 +1678,17 @@ show_master_baseline() {
 
 delete_master_baseline() {
     exec_with_retry 5 $CRM_ATTR_REBOOT -N "$NODENAME" -n "$PGSQL_MASTER_BASELINE" -D
+}
+
+set_sync_mode_all() {
+    [ "$OCF_RESKEY_rep_mode" = "sync" ] || return 0
+    ocf_log info "Set all nodes into sync mode,synchronous_standby_names='$OCF_RESKEY_synchronous_standby_names'."
+    runasowner -q err "echo \"synchronous_standby_names = '$OCF_RESKEY_synchronous_standby_names'\" > \"$REP_MODE_CONF\""
+    if [ $? -ne 0 ]; then
+        ocf_exit_reason "Can't set all nodes into sync mode."
+        return 1
+    fi
+    return 0
 }
 
 set_async_mode_all() {

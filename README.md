@@ -81,6 +81,7 @@
 - psmisc
 - policycoreutils-python
 - postgresql-server
+- ipvsadm
 
 ## 安装
 
@@ -125,9 +126,9 @@
 #### 安装Pacemaker和Corosync及相关软件包
 在所有节点执行：
 
-    yum install -y pacemaker pcs psmisc policycoreutils-python
+    yum install -y pacemaker pcs psmisc policycoreutils-python ipvsadm
 
-注：如果OS自带的Pacemaker比较旧，建议下载新版的。之前在Pacemaker 1.1.7上遇到了不少Bug，因此不建议使用这个版本或更老的版本。
+注：如果OS自带的Pacemaker比较旧，建议下载新版的。之前在Pacemaker 1.1.7上遇到了不少Bug，因此不建议使用这个版本或更老的版本。配置LVS(使用config_three_plus_x模板)支持需要安装ipvsadm
 
 #### 启用pcsd服务
 在所有节点执行：
@@ -1238,6 +1239,8 @@ promote和monitor的同步复制切换为异步复制前都需要先获取锁，
 
 4. 资源启动时通过pgsql_REPL_INFO中记录的Master节点名，继续沿用原Master。   
    通过这种方式加速集群的启动，并避免不必要的主从切换。集群仅在初始启动pgsql_REPL_INFO的值为空时，才通过xlog比较确定哪个节点作为Master。
+
+5. 增加synchronous_standby_names属性，当值不为空时，将为postgresql.conf里的synchronous_standby_names设置固定的值。在3节点集群下设置这个值可避免了动态切换同步异步，确保复制一直处于同步模式下不会丢失，使用示例参考config_three_plus_x.ini.sample和three_plus_x.pcs.template。
 
 关于pgsql RA的原始功能请参考：[PgSQL Replicated Cluster](http://clusterlabs.org/wiki/PgSQL_Replicated_Cluster)
 

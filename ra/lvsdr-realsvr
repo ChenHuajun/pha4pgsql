@@ -1,0 +1,174 @@
+#!/bin/sh
+#
+#
+# Resource Agent script for LVS(DR) Real Server
+#
+# Authors:  Chen Huajun
+#
+#######################################################################
+# Initialization:
+
+: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
+. ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+
+#######################################################################
+OCF_RESKEY_nic_lo_default="lo:0"
+
+: ${OCF_RESKEY_nic_lo=${OCF_RESKEY_nic_lo_default}}
+
+#######################################################################
+meta_data() {
+	cat <<END
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="lvsdr-realsvr" version="0.9">
+<version>1.0</version>
+
+<longdesc lang="en">
+Resource Agent script for LVS(DR) Real Server.
+#Currently only one lvsdr-realsvr resource(primitive or clone) is allowed within a cluster.
+</longdesc>
+<shortdesc lang="en">Resource Agent script for LVS(DR) Real Server</shortdesc>
+
+<parameters>
+<parameter name="vip" unique="1"  required="1">
+<longdesc lang="en">
+Vitrual IP for virtual service.
+</longdesc>
+<shortdesc lang="en">Vitrual IP for virtual service</shortdesc>
+<content type="string" />
+</parameter>
+
+<parameter name="nic_lo" unique="1"  required="0">
+<longdesc lang="en">
+Loopback network device label for realserver,such as "lo:0".
+</longdesc>
+<shortdesc lang="en">Loopback network device label for realserver</shortdesc>
+<content type="string" default="${OCF_RESKEY_nic_lo_default}" />
+</parameter>
+
+</parameters>
+
+<actions>
+<action name="start"        timeout="20" />
+<action name="stop"         timeout="20" />
+<action name="monitor"      timeout="20" interval="10" depth="0" />
+<action name="meta-data"    timeout="5" />
+<action name="validate-all"   timeout="20" />
+</actions>
+</resource-agent>
+END
+}
+
+#######################################################################
+
+lvsdr_realsvr_usage() {
+	cat <<END
+usage: $0 {start|stop|monitor|validate-all|meta-data}
+
+END
+}
+
+lvsdr_realsvr_start() {
+    
+    # Start LVS-DR real server on this machine.
+    echo 1 > /proc/sys/net/ipv4/conf/lo/arp_ignore
+    echo 2 > /proc/sys/net/ipv4/conf/lo/arp_announce
+    echo 1 > /proc/sys/net/ipv4/conf/all/arp_ignore
+    echo 2 > /proc/sys/net/ipv4/conf/all/arp_announce
+    
+    ip addr|grep "${OCF_RESKEY_nic_lo}"|grep ${OCF_RESKEY_vip}
+    if [ $? -eq 0 ]; then
+        return $OCF_SUCCESS
+    fi
+
+    ifconfig lo down
+    ifconfig lo up
+    if [ $? -ne 0 ]; then
+        ocf_exit_reason "fail to up loopback device"
+        return $OCF_ERR_GENERIC
+    fi
+    
+    ifconfig ${OCF_RESKEY_nic_lo} ${OCF_RESKEY_vip} \
+        broadcast ${OCF_RESKEY_vip} netmask 255.255.255.255 up
+
+        if [ $? -eq 0 ]; then
+        return $OCF_SUCCESS
+    else
+        ocf_exit_reason "fail to up real server loopback device"
+	    return $OCF_ERR_GENERIC 
+    fi
+}
+
+lvsdr_realsvr_stop() {    
+    # Stop LVS-DR real server loopback device(s).
+    ifconfig ${OCF_RESKEY_nic_lo} down
+    #echo 0 > /proc/sys/net/ipv4/conf/lo/arp_ignore
+    #echo 0 > /proc/sys/net/ipv4/conf/lo/arp_announce
+    #echo 0 > /proc/sys/net/ipv4/conf/all/arp_ignore
+    #echo 0 > /proc/sys/net/ipv4/conf/all/arp_announce
+    
+    return $OCF_SUCCESS
+}
+
+lvsdr_realsvr_monitor() {
+
+	ip addr|grep "${OCF_RESKEY_nic_lo}"|grep ${OCF_RESKEY_vip}
+	if [ $? -ne 0  ]; then
+        if ocf_is_probe; then
+            ocf_log info "These is no ip addr definition for this real server"
+        else
+            ocf_log err "These is no ip addr definition for this real server"
+        fi
+	    return $OCF_NOT_RUNNING
+	fi
+    
+	return $OCF_SUCCESS
+}
+
+lvsdr_realsvr_validate() {
+    return $OCF_SUCCESS
+}
+
+# Set debug log output
+case "$1" in
+    start|stop|promote|demote)
+        write_log="Yes"
+        ;;
+    monitor)
+        if ocf_is_probe; then
+            write_log="Yes"
+        fi
+        ;;
+    *)
+        write_log="No"
+        ;;
+esac
+
+if [ "$write_log" = "Yes" ]; then
+    ocf_log info "##### ${OCF_RESOURCE_TYPE}(${OCF_RESOURCE_INSTANCE}):${__OCF_ACTION} begin"
+fi
+
+case $__OCF_ACTION in
+meta-data)	meta_data
+		exit $OCF_SUCCESS
+		;;
+start)		lvsdr_realsvr_start;;
+stop)		lvsdr_realsvr_stop;;
+monitor)	lvsdr_realsvr_monitor;;
+validate-all)	lvsdr_realsvr_validate;;
+usage|help)	lvsdr_realsvr_usage
+		exit $OCF_SUCCESS
+		;;
+*)		lvsdr_realsvr_usage
+		exit $OCF_ERR_UNIMPLEMENTED
+		;;
+esac
+rc=$?
+
+if [ "$write_log" = "Yes" ]; then
+    ocf_log info "##### ${OCF_RESOURCE_TYPE}(${OCF_RESOURCE_INSTANCE}):${__OCF_ACTION} end (rc=$rc)"
+fi
+
+exit $rc
+

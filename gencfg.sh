@@ -27,6 +27,7 @@ sed -e 's#${pha4pgsql_dir}#'${pha4pgsql_dir}#g \
     -e 's#${pgsql_enable_distlock}#'${pgsql_enable_distlock}#g \
     -e 's#${pgsql_distlock_psql_cmd}#'"${pgsql_distlock_psql_cmd}#g" \
     -e 's#${pgsql_distlock_lockname}#'${pgsql_distlock_lockname}#g \
+    -e 's#${enable_lvs}#'${enable_lvs}#g \
     $template_file > config.pcs
 	
 
