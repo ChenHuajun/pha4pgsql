@@ -57,4 +57,6 @@ pcs -f pgsql_cfg constraint colocation add vip-slave with Slave msPostgresql INF
 pcs -f pgsql_cfg constraint order promote  msPostgresql then start vip-slave symmetrical=false score=INFINITY
 pcs -f pgsql_cfg constraint order stop msPostgresql then stop vip-slave symmetrical=false score=0
 
+pcs -f pgsql_cfg constraint location  vip-slave rule id="loc-vip-slave-rule" score=1000 master-pgsql eq "HS:sync"
+
 pcs cluster cib-push pgsql_cfg

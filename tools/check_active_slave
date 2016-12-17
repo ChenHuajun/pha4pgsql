@@ -1,0 +1,33 @@
+#!/bin/sh
+
+usage() {
+    cat <<EOF
+Usage: $0 <psql_cmd> <target_host>
+return 't' if is slave, otherwise return 'f'
+
+Examples:
+
+	check_active_slave 'psql "port=5433 dbname=postgres user=replication password=replication"' 192.168.0.213
+
+EOF
+}
+
+
+if [ $# -lt 2 ]; then
+    usage
+    exit 1
+fi
+
+psql_cmd=$1
+target_host=$2
+PSQL="$psql_cmd"
+
+output=`echo $PSQL -h $target_host -tA -c \""select pg_is_in_recovery()"\" | sh`
+if [ $? -ne 0 ];then
+    if [ -n "$output" ];then
+        echo "$output" >&2
+    fi
+    exit 1
+fi
+
+echo "$output"

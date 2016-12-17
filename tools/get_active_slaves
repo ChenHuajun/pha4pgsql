@@ -1,0 +1,33 @@
+#!/bin/sh
+
+usage() {
+    cat <<EOF
+Usage: $0 <psql_cmd>
+Display the list of active slaves, or empty if none or failed. 
+psql_cmd must connect to the master of pgsql cluster
+
+Examples:
+
+	get_active_slaves 'psql "host=192.168.0.236 port=5433 dbname=postgres user=replication password=replication"'
+
+EOF
+}
+
+
+if [ $# -lt 1 ]; then
+    usage
+    exit 1
+fi
+
+psql_cmd=$1
+PSQL="$psql_cmd"
+
+output=`echo $PSQL -tA -c \""select application_name from pg_stat_replication where sync_state in ('sync','potential','async') and not application_name is null"\" | sh`
+if [ $? -ne 0 ];then
+    if [ -n "$output" ];then
+        echo "$output" >&2
+    fi
+    exit 1
+fi
+
+echo "$output" | tr '\n' ' '

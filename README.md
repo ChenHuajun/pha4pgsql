@@ -81,6 +81,7 @@
 - psmisc
 - policycoreutils-python
 - postgresql-server
+- ipvsadm
 
 ## 安装
 
@@ -125,9 +126,9 @@
 #### 安装Pacemaker和Corosync及相关软件包
 在所有节点执行：
 
-    yum install -y pacemaker pcs psmisc policycoreutils-python
+    yum install -y pacemaker pcs psmisc policycoreutils-python ipvsadm
 
-注：如果OS自带的Pacemaker比较旧，建议下载新版的。之前在Pacemaker 1.1.7上遇到了不少Bug，因此不建议使用这个版本或更老的版本。
+注：如果OS自带的Pacemaker比较旧，建议下载新版的。之前在Pacemaker 1.1.7上遇到了不少Bug，因此不建议使用这个版本或更老的版本。配置LVS(使用config_three_plus_x模板)支持需要安装ipvsadm
 
 #### 启用pcsd服务
 在所有节点执行：
@@ -302,6 +303,14 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		pgsql_distlock_lockname=pgsql_cls1
 
     需要根据实际环境修改上面的参数。当多个多个集群使用锁服务时，确保每个集群的pgsql_distlock_lockname值必须是唯一的。
+
+    template目录下有预定义的参数模板。
+    - config_dual.ini.sample  
+      双节点参数模板，通过同步复制和分布式锁仲裁防止脑裂
+    - config_muti.ini.sample
+      多节点参数模板，通过no-quorum-policy="stop"防止脑裂
+    - config_three_plus_x.ini.sample
+      比config_muti.ini.sample更严格，在3个固定的节点上始终设置为同步复制，防止原来pgsql RA动态切换同步复制和异步复制带来的不一致风险，同时引入LVS做负载均衡。3个以上节点，且需要数据强一致时，推荐使用该模板。
 
 3. 安装pha4pgsql
 
@@ -1238,6 +1247,7 @@ promote和monitor的同步复制切换为异步复制前都需要先获取锁，
 
 4. 资源启动时通过pgsql_REPL_INFO中记录的Master节点名，继续沿用原Master。   
    通过这种方式加速集群的启动，并避免不必要的主从切换。集群仅在初始启动pgsql_REPL_INFO的值为空时，才通过xlog比较确定哪个节点作为Master。
+
 
 关于pgsql RA的原始功能请参考：[PgSQL Replicated Cluster](http://clusterlabs.org/wiki/PgSQL_Replicated_Cluster)
 
