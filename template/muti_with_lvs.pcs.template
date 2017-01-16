@@ -26,15 +26,15 @@ pcs -f pgsql_cfg resource create pgsql expgsql \
    pgctl="${pgsql_pgctl}" \
    psql="${pgsql_psql}" \
    pgdata="${pgsql_pgdata}" \
+   pghost="${pgsql_pghost}" \
    pgport="${pgsql_pgport}" \
+   socketdir="${pgsql_socketdir}" \
    rep_mode="${pgsql_rep_mode}" \
    node_list="${node1} ${node2} ${node3} ${othernodes}" \
    restore_command="${pgsql_restore_command}" \
    primary_conninfo_opt="user=${pgsql_repuser} password=${pgsql_reppassord} keepalives_idle=60 keepalives_interval=5 keepalives_count=5" \
    master_ip="${writer_vip}" \
    restart_on_promote="false" \
-   synchronous_standby_names="${node1},${node2},${node3}" \
-   socketdir="" \
    op start   timeout="60s" interval="0s"  on-fail="restart" \
    op monitor timeout="60s" interval="4s" on-fail="restart" \
    op monitor timeout="60s" interval="3s"  on-fail="restart" role="Master" \
@@ -74,11 +74,6 @@ pcs -f pgsql_cfg resource create lvsdr-realsvr lvsdr-realsvr \
    op stop    timeout="60s" interval="0s"  on-fail="block"
 
 pcs -f pgsql_cfg resource clone lvsdr-realsvr clone-node-max=1 notify=false
-
-pcs -f pgsql_cfg constraint location msPostgresql \
-        rule id="loc-pgsql-master-rule" role="master" score=-INFINITY \#uname ne ${node1} and \#uname ne ${node2} and \#uname ne ${node3}
-pcs -f pgsql_cfg constraint location msPostgresql \
-        rule id="loc-pgsql-master-2-rule" role="master" score=10000 \#uname eq ${node1} or \#uname eq ${node2} or \#uname eq ${node3}
 
 pcs -f pgsql_cfg constraint colocation add lvsdr with vip-slave INFINITY
 pcs -f pgsql_cfg constraint colocation add lvsdr-realsvr-clone with Slave msPostgresql INFINITY

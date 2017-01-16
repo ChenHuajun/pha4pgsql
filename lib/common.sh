@@ -38,23 +38,25 @@ pgsql_status() {
             return 2
         fi
     
-        # 测试发现几个节点的crm状态可能会不一致，保险起见需要进行检查。
-        # 但是网络出现故障（丢包而不是拒绝）时，ssh命令可能会阻塞，故需要设置连接超时。 
-        localnode=`hostname`
-        local_status=`echo "$CLUSTER_STATUS"|grep -E "Current DC:|Online:"`
-        for hanode in $node1 $node2 $node3
-        do
-            if [ "$hanode" != "$localnode" ]; then
-                remote_status=`ssh -o ConnectTimeout=2 $hanode crm_mon -Afr1|grep -E "Current DC:|Online:"`
-                if [ "$remote_status" = "$local_status" ]; then
-                    break;
+        if [ "$use_ssh" = "yes" ]; then
+            # 测试发现几个节点的crm状态可能会不一致，保险起见需要进行检查。
+            # 但是网络出现故障（丢包而不是拒绝）时，ssh命令可能会阻塞，故需要设置连接超时。 
+            localnode=`hostname`
+            local_status=`echo "$CLUSTER_STATUS"|grep -E "Current DC:|Online:"`
+            for hanode in $node1 $node2 $node3
+            do
+                if [ "$hanode" != "$localnode" ]; then
+                    remote_status=`ssh -o ConnectTimeout=2 $hanode crm_mon -Afr1|grep -E "Current DC:|Online:"`
+                    if [ "$remote_status" = "$local_status" ]; then
+                        break;
+                    fi
                 fi
+            done
+        
+            if [ "$remote_status" != "$local_status" ]; then
+                echo "inconsistentat status with other HA nodes" >&2
+                return 2
             fi
-        done
-    
-        if [ "$remote_status" != "$local_status" ]; then
-            echo "inconsistentat status with other HA nodes" >&2
-            return 2
         fi
     
     fi

@@ -13,13 +13,13 @@
 
 #######################################################################
 
-OCF_RESKEY_realserver_dependent_resource_default="clone-lvsdr-realsvr"
+#OCF_RESKEY_realserver_dependent_resource_default="lvsdr-realsvr-clone"
 OCF_RESKEY_realserver_dependent_attribute_name_default="readable"
 OCF_RESKEY_realserver_dependent_attribute_value_default="1"
 OCF_RESKEY_virtual_service_options_default="-s rr"
 OCF_RESKEY_default_weight_default="1"
 
-: ${OCF_RESKEY_realserver_dependent_resource=${OCF_RESKEY_realserver_dependent_resource_default}}
+#: ${OCF_RESKEY_realserver_dependent_resource=${OCF_RESKEY_realserver_dependent_resource_default}}
 : ${OCF_RESKEY_realserver_dependent_attribute_name=${OCF_RESKEY_realserver_dependent_attribute_name_default}}
 : ${OCF_RESKEY_realserver_dependent_attribute_value=${OCF_RESKEY_realserver_dependent_attribute_value_default}}
 : ${OCF_RESKEY_virtual_service_options=${OCF_RESKEY_virtual_service_options_default}}
@@ -132,7 +132,7 @@ This parameter will be disabled if realserver_get_real_servers_script or realser
 <parameter name="realserver_dependent_attribute_value" unique="0" required="0">
 <longdesc lang="en">
 The expect attribute value for a node which can become a real server.
-The value can be a regular expression, such as "HS:sync|HA:async".
+The value can be a regular expression, such as "HS:sync|HS:potential|HS:async".
 This parameter will be disabled if realserver_get_real_servers_script or realserver_check_active_slave_script is not empty.
 </longdesc>
 <shortdesc lang="en">The expect attribute value for a node which can become a real server</shortdesc>
@@ -240,7 +240,7 @@ get_lived_realservers() {
         i=0
         for realsvr in $candidate_realservers ; do
             readable="$($CRM_ATTRIBUTE -N "$realsvr" -l reboot -n ${OCF_RESKEY_realserver_dependent_attribute_name} -Qq 2>/dev/null)"
-            echo "$readable"| grep -Ex "${OCF_RESKEY_realserver_dependent_attribute_value}"
+            echo "$readable"| grep -Ex "${OCF_RESKEY_realserver_dependent_attribute_value}" >/dev/null
             if [ $? -eq 0 ]; then
                 realsvr_list="$realsvr_list $realsvr"
                 let i+=1

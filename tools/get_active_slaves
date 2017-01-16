@@ -8,7 +8,7 @@ psql_cmd must connect to the master of pgsql cluster
 
 Examples:
 
-	get_active_slaves 'psql "host=192.168.0.236 port=5433 dbname=postgres user=replication password=replication"'
+	get_active_slaves psql \"host=192.168.0.236 port=5432 dbname=postgres user=replication password=replication\"
 
 EOF
 }
@@ -19,7 +19,7 @@ if [ $# -lt 1 ]; then
     exit 1
 fi
 
-psql_cmd=$1
+psql_cmd="$@"
 PSQL="$psql_cmd"
 
 output=`echo $PSQL -tA -c \""select application_name from pg_stat_replication where sync_state in ('sync','potential','async') and not application_name is null"\" | sh`

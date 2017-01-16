@@ -29,18 +29,18 @@
 8. 为防止集群分区后，Slave升级为新Master而旧Master切换到异步复制导致脑裂和数据双写，引入分布式锁服务进行仲裁。Slave升级为新Master和旧Master切换到异步复制前必须先取得锁，避免这两件事同时发生。失去锁的Master会主动停止PostgreSQL进程，防止出现双主。
 9. 如果分布锁服务发生故障而所有PostgreSQL节点都是健康的，expgsql会忽视锁服务，即不影响集群服务。但在分布锁服务故障期间，Master发生节点故障(注意区分节点故障和资源故障)，集群将无法正常failover。
 10. 同步复制下只有同步Slave才有资格成为候选Master，加上有分布式锁的防护，可以确保failover后数据不丢失。
-11. 集群初始启动和每次failover时通过pg_ctl promote提升Slave为Master并使时间线加1，同时记录Master节点名，时间线和切换时的xlog位置到集群CIB。
+11. 集群初始启动和每次failover时通过`pg_ctl promote`提升Slave为Master并使时间线加1，同时记录Master节点名，时间线和切换时的xlog位置到集群CIB。
 12. 集群重启时根据集群CIB中记录的信息确定Master节点，并保持时间线不变。
-13. expgsql启动PostgreSQL前会检查该节点的时间线和xlog，如果和集群CIB中记录的信息有冲突，将报错。需要人工通过cls_repair_slave(pg_rewind)等手段修复。
+13. expgsql启动PostgreSQL前会检查该节点的时间线和xlog，如果和集群CIB中记录的信息有冲突，将报错。需要人工通过`cls_repair_by_pg_rewind`等手段修复。
 14. 读写VIP和Master节点绑定，只读VIP和其中一个Slave绑定，应用只需访问VIP，无需关心具体访问哪个节点。
 
 
 ## 集群操作命令一览
-1. cls_start  
+1. `cls_start`  
    启动集群
-2. cls_stop   
+2. `cls_stop`   
    停止集群
-3. cls_online_switch      
+3. `cls_online_switch`      
    在线主从切换,对多节点集群当前不支持指定新Master。在多节点的同步复制下，只有pgsql-data-status值为“STREAMING|SYNC”的节点，即同步复制节点可以作为候选master。如果希望指定其它节点作为新的master，可以在master上执行下面的操作，然后等待pgsql-data-status更新。
 
 		su - postgres
@@ -48,46 +48,46 @@
 		pg_ctl -D /home/postgresql/data reload
 		exit
 
-4. cls_master   
+4. `cls_master`   
    输出当前Master节点名
-5. cls_status   
+5. `cls_status`   
    显示集群状态
-6. cls_cleanup   
+6. `cls_cleanup`   
    清除资源状态和fail-count。在某个节点上资源失败次数(fail-count)超过3次Pacemaker将不再分配该资源到此节点，人工修复故障后需要调用cleanup让Pacemkaer重新尝试启动资源。
-7. cls_reset_master [master]   
-   设置pgsql_REPL_INFO使指定的节点成为Master；如未指定Master，则清除pgsql_REPL_INFO让Pacemaker重新在所有节点中选出xlog位置最新的节点作为Master。仅用于集群中没有任何节点满足Master条件情况下的紧急修复。
-8. cls_repair_by_pg_rewind
-   通过pg_rewind修复当前节点，主要用于旧Master的修复，回退超出时间线分叉点的那部分更新，并和新Master建立复制关系。pg_rewind仅在PostgreSQL 9.5以上版本提供
-9. cls_rebuild_slave   
-   通过pg_basebackup在当前节点重建Slave。执行该命令前需要停止当前节点上的PostgreSQL进程并清空旧的数据目录。
-10. cls_maintenance  
+7. `cls_reset_master` [master]   
+   设置`pgsql_REPL_INFO`使指定的节点成为Master；如未指定Master，则清除`pgsql_REPL_INFO`让Pacemaker重新在所有节点中选出xlog位置最新的节点作为Master。仅用于集群中没有任何节点满足Master条件情况下的紧急修复。
+8. `cls_repair_by_pg_rewind`
+   通过`pg_rewind`修复当前节点，主要用于旧Master的修复，回退超出时间线分叉点的那部分更新，并和新Master建立复制关系。`pg_rewind`仅在PostgreSQL 9.5以上版本提供
+9. `cls_rebuild_slave`  
+   通过`pg_basebackup`在当前节点重建Slave。执行该命令前需要停止当前节点上的PostgreSQL进程并清空旧的数据目录。
+10. `cls_maintenance`  
    切换集群到维护模式使所有资源脱离Pacemaker的控制。当需要重启Pacemaker和Corosync又不能停止PostgreSQL服务时，可以先调用这个命令，Pacemaker和Corosync重启完成后再调用用cls_unmaintenance恢复为普通模式。
-11. cls_unmaintenance  
+11. `cls_unmaintenance`  
    从维护模式恢复到普通模式。
-12. cls_maintenance_node <nodename> 
+12. `cls_maintenance_node` <nodename> 
    使节点进入维护模式。维护模式和unmanage resource相比的区别是会取消monitor，比unmanage更彻底。
-13. cls_unmaintenance_node <nodename> 
+13. `cls_unmaintenance_node` <nodename> 
    解除节点的维护模式。
-14. cls_standby_node <nodename>   
+14. `cls_standby_node` <nodename>   
    释放某节点上所有资源。可用于特定节点的维护，比如升级。
-15. cls_unstandby_node <nodename>   
-   恢复cls_standby_node产生的节点standby状态。
+15. `cls_unstandby_node` <nodename>   
+   恢复`cls_standby_node`产生的节点standby状态。
 
 以上命令必须以root用户执行
 
 ## 依赖软件
 - pacemaker
+- corosync
 - pcs
-- psmisc
-- policycoreutils-python
 - postgresql-server
 - ipvsadm
 
 ## 安装
 
 安装过程以在以下环境下部署双节点HA集群为例说明。  
+多节点的安装示例请参考:[基于Pacemaker的PostgreSQL一主多从读负载均衡集群搭建](https://github.com/ChenHuajun/pha4pgsql/blob/master/doc/muti_with_lvs.md)
 
-- OS:CentOS 7.0  
+- OS:CentOS 7.1  
 - 节点1主机名:node1  
 - 节点2主机名:node2   
 - writer_vip:192.168.41.136   
@@ -126,9 +126,9 @@
 #### 安装Pacemaker和Corosync及相关软件包
 在所有节点执行：
 
-    yum install -y pacemaker pcs psmisc policycoreutils-python ipvsadm
+    yum install -y pacemaker corosync pcs ipvsadm
 
-注：如果OS自带的Pacemaker比较旧，建议下载新版的。之前在Pacemaker 1.1.7上遇到了不少Bug，因此不建议使用这个版本或更老的版本。配置LVS(使用config_three_plus_x模板)支持需要安装ipvsadm
+注：如果OS自带的Pacemaker比较旧，建议下载新版的。之前在Pacemaker 1.1.7上遇到了不少Bug，因此不建议使用这个版本或更老的版本。配置LVS(使用`muti_with_lvs.pcs.template`模板)支持需要安装ipvsadm
 
 #### 启用pcsd服务
 在所有节点执行：
@@ -155,14 +155,6 @@
 在任何一个节点上执行:
 
     pcs cluster start --all
-
-#### 启用pacemaker & corosync服务
-在所有节点执行：
-
-	systemctl start corosync.service
-	systemctl enable corosync.service
-	systemctl start pacemaker.service
-	systemctl enable pacemaker.service
 	
 ### 安装和配置PostgreSQL
 
@@ -191,27 +183,28 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
 		listen_addresses = '*'
 		wal_level = hot_standby
+		wal_log_hints = on
 		synchronous_commit = on
 		max_wal_senders=5
 		wal_keep_segments = 32
 		hot_standby = on
-		replication_timeout = 5000
+		wal_sender_timeout = 5000
 		wal_receiver_status_interval = 2
 		max_standby_streaming_delay = -1
 		max_standby_archive_delay = -1
 		restart_after_crash = off
 		hot_standby_feedback = on
 
-    注：PostgreSQL 9.3及以后版本，应将replication_timeout替换成wal_sender_timeout；PostgreSQL 9.5以上版本，可加上"wal_log_hints = on"，使得可以使用pg_rewind修复旧Master。
+    注：PostgreSQL9.5以上版本设置"`wal_log_hints = on`"可以使用`pg_rewind`修复旧Master。
 
 
-4. 修改pg_hba.conf
+4. 修改`pg_hba.conf`
  
 		local   all                 all                              trust
 		host    all                 all     192.168.41.0/24          md5
 		host    replication         all     192.168.41.0/24          md5
 
-5. 启动
+5. 启动postgres
 
 		pg_ctl -D /data/postgresql/data/ start
 
@@ -302,15 +295,15 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		pgsql_distlock_psql_cmd='/usr/bin/psql \\"host=node3 port=5439 dbname=postgres user=postgres connect_timeout=5\\"'
 		pgsql_distlock_lockname=pgsql_cls1
 
-    需要根据实际环境修改上面的参数。当多个多个集群使用锁服务时，确保每个集群的pgsql_distlock_lockname值必须是唯一的。
+    需要根据实际环境修改上面的参数。当多个集群使用锁服务时，确保每个集群的`pgsql_distlock_lockname`值必须是唯一的。
 
     template目录下有预定义的参数模板。
-    - config_dual.ini.sample  
+    - `config_dual.ini.sample`  
       双节点参数模板，通过同步复制和分布式锁仲裁防止脑裂
-    - config_muti.ini.sample
+    - `config_muti.ini.sample`
       多节点参数模板，通过no-quorum-policy="stop"防止脑裂
-    - config_three_plus_x.ini.sample
-      比config_muti.ini.sample更严格，在3个固定的节点上始终设置为同步复制，防止原来pgsql RA动态切换同步复制和异步复制带来的不一致风险，同时引入LVS做负载均衡。3个以上节点，且需要数据强一致时，推荐使用该模板。
+    - `config_muti_with_lvs.ini.sample`
+      多节点参数模板，并引入LVS做读负载均衡
 
 3. 安装pha4pgsql
 
@@ -399,7 +392,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
        
         cls_status
 
-    cls_status的输出示例如下：
+    `cls_status`的输出示例如下：
 
 		[root@node1 pha4pgsql]# cls_status
 		Last updated: Fri Apr 22 02:01:01 2016
@@ -468,7 +461,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		It's displayed when it's Master.
 		These states are the transitional state of final data, and it may be not consistent with the state of actual data. For instance, During PRI, the state is "LATEST". But the node is stopped or down, this state "LATEST" is maintained if Master doesn't exist in other nodes. It never changes to "DISCONNECT" for oneself. When other node newly is promoted, this new Master changes the state of old Master to "DISCONNECT". When any node can not become Master, this "LATEST" will be keeped.
 
-	pgsql_REPL_INFO的3段内容分别指当前master，上次提升前的时间线和xlog位置。
+	`pgsql_REPL_INFO`的3段内容分别指当前master，上次提升前的时间线和xlog位置。
 
 		pgsql_REPL_INFO:node1|1|00000000070000D0
 
@@ -583,7 +576,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
 4. 修复旧Master
 
-	可通过pg_basebackup修复旧Master
+	可通过`pg_basebackup`修复旧Master
 
 		# su - postgres
 		$ rm -rf /data/postgresql/data
@@ -593,7 +586,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
     
 	如果恢复失败，请检查PostgreSQL和Pacemaker日志文件。    
 
-	通过pg_baseback修复旧Master。cls_rebuild_slave是对pg_basebackup的包装，主要多了执行结果状态的检查。
+	通过`pg_baseback`修复旧Master。`cls_rebuild_slave`是对`pg_basebackup`的包装，主要多了执行结果状态的检查。
 
 		[root@node1 pha4pgsql]# rm -rf /data/postgresql/data
 		[root@node1 pha4pgsql]# cls_rebuild_slave 
@@ -644,7 +637,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		pgsql_REPL_INFO:node2|2|0000000007000410 
 
 
-     9.5以上版本还可以通过pg_rewind修复旧Master
+     9.5以上版本还可以通过`pg_rewind`修复旧Master
 
 		[root@node1 pha4pgsql]# cls_repair_by_pg_rewind 
 		connected to server
@@ -857,7 +850,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
 6. 修复node1(旧Master)
  
-    修复node1(旧Master)的方法和前面一样，可使用cls_repair_slave、cls_repair_by_pg_rewind，或者直接使用pg_basebackup、pg_rewind，。
+    修复node1(旧Master)的方法和前面一样，可使用`cls_repair_slave`、`cls_repair_by_pg_rewind`，或者直接使用`pg_basebackup`、`pg_rewind`。
 
 		[root@node1 pha4pgsql]# cls_repair_slave 
 		connected to server
@@ -986,7 +979,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		synchronous_standby_names = ''
 
 4. 修复Salve   
-    在node2上执行cls_cleanup，清除fail-count后，Pacemaker会再次启动PostgreSQL进程。
+    在node2上执行`cls_cleanup`，清除fail-count后，Pacemaker会再次启动PostgreSQL进程。
 
 		[root@node2 ~]# cls_cleanup 
 		All resources/stonith devices successfully cleaned up
@@ -1175,7 +1168,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 		cls_unmanage
 
 2. 人工修复PostgreSQL，建立复制关系
-   至于master的选取，可以选择pgsql_REPL_INFO中的master节点，或根据xlog位置确定。
+   至于master的选取，可以选择`pgsql_REPL_INFO`中的master节点，或根据xlog位置确定。
 3. 在所有节点上停止PostgreSQL
 4. 清除状态并恢复集群管理
 
@@ -1199,7 +1192,7 @@ OS自带的PostgreSQL往往比较旧，可参考http://www.postgresql.org/downlo
 
 在PostgreSQL服务启动期间，正常情况下，执行setup.sh不会使服务停止。
 
-setup.sh还可以完全取代前面的cls_reset_master。
+setup.sh还可以完全取代前面的`cls_reset_master`。
 
 ### fail-count的清除
 如果某个节点上有资源的fail-count不为0，最好将其清除，即使当前资源是健康的。
@@ -1208,7 +1201,7 @@ setup.sh还可以完全取代前面的cls_reset_master。
 
 ## 注意事项
 1. ./setup.sh会清除CIB，对Pacemaker资源定义的修改应该写到config.pcs里，防止下次执行setup.sh丢失。
-2. 有些包装后的脚本容易超时，比如cls_rebuild_slave。此时可能执行还没有完成的，需要通过cls_status或日志进行确认。
+2. 有些包装后的脚本容易超时，比如`cls_rebuild_slave`。此时可能执行还没有完成的，需要通过`cls_status`或日志进行确认。
 
  
 ## 附录1：对pgsql RA的修改
@@ -1231,22 +1224,22 @@ promote和monitor的同步复制切换为异步复制前都需要先获取锁，
     在网络不稳定的极端情况下，主从分区后可能一会只有Master可以连上分布式锁服务，一会只有Slave可以连上分布式锁服务，导致在一个很偶然的小时间窗口内出现双主而且是异步复制，当然这种场景发生的概率极低。
 
 
-2. 根据Master是否发生变更动态采取restart或pg_ctl promote的方式提升Slave为Master。    
-	当Master发生变更时采用pg_ctl promote的方式提升Slave为Master；未发生变更时采用restart的方式提升。
-	相应地废弃原pgsql RA的restart_on_promote参数。
+2. 根据Master是否发生变更动态采取restart或`pg_ctl promote`的方式提升Slave为Master。    
+	当Master发生变更时采用`pg_ctl promote`的方式提升Slave为Master；未发生变更时采用restart的方式提升。
+	相应地废弃原pgsql RA的`restart_on_promote`参数。
 
 3. 记录PostgreSQL上次时间线切换前的时间线和xlog位置信息    
-	这些信息记录在集群配置变量pgsql_REPL_INFO中。pgsql_REPL_INFO的值由以下3个部分组成,通过‘|’连接在一起。
+	这些信息记录在集群配置变量`pgsql_REPL_INFO`中。`pgsql_REPL_INFO`的值由以下3个部分组成,通过‘|’连接在一起。
 	
 	- Master节点名
-	- pg_ctl promote前的时间线
-	- pg_ctl promote前的时间线的结束位置
+	- `pg_ctl promote`前的时间线
+	- `pg_ctl promote`前的时间线的结束位置
 	
-	RA启动时，会检查当前节点和pgsql_REPL_INFO中记录的状态是否有冲突，如有报错不允许资源启动。
+	RA启动时，会检查当前节点和`pgsql_REPL_INFO`中记录的状态是否有冲突，如有报错不允许资源启动。
 	因为有这个检查废弃原pgsql RA的PGSQL.lock锁文件。
 
-4. 资源启动时通过pgsql_REPL_INFO中记录的Master节点名，继续沿用原Master。   
-   通过这种方式加速集群的启动，并避免不必要的主从切换。集群仅在初始启动pgsql_REPL_INFO的值为空时，才通过xlog比较确定哪个节点作为Master。
+4. 资源启动时通过`pgsql_REPL_INFO`中记录的Master节点名，继续沿用原Master。   
+   通过这种方式加速集群的启动，并避免不必要的主从切换。集群仅在初始启动`pgsql_REPL_INFO`的值为空时，才通过xlog比较确定哪个节点作为Master。
 
 
 关于pgsql RA的原始功能请参考：[PgSQL Replicated Cluster](http://clusterlabs.org/wiki/PgSQL_Replicated_Cluster)

@@ -18,6 +18,3 @@ pgsql_restore_command=""
 pgsql_rep_mode=sync
 pgsql_repuser=replication
 pgsql_reppassord=replication
-pgsql_enable_distlock=false
-pgsql_distlock_psql_cmd=''
-pgsql_distlock_lockname=pgsql_cls1
