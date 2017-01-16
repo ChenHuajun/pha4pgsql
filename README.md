@@ -1210,13 +1210,13 @@ setup.sh还可以完全取代前面的`cls_reset_master`。
 1. 引入分布式锁服务防止双节点集群出现脑裂，并防止在failover过程中丢失数据。   
 promote和monitor的同步复制切换为异步复制前都需要先获取锁，因此确保这两件事不能同时发生，也就防止了在同步复制模式下failover出现数据丢失。相应的引入以下参数：
 
-	- enable_distlock   
+	- `enable_distlock`   
 	    是否启动分布式锁仲裁，对双节集群建议启用。
-	- distlock_lock_cmd   
+	- `distlock_lock_cmd`   
 	    分布式锁服务的加锁命令
-	- distlock_unlock_cmd   
+	- `distlock_unlock_cmd`   
 	    分布式锁服务的解锁命令
-	- distlock_lockservice_deadcheck_nodelist   
+	- `distlock_lockservice_deadcheck_nodelist`   
 		无法访问分布式锁服务时，需要做二次检查的节点列表，通过ssh连接到这些节点后再获取锁。如果节点列表中所有节点都无法访问分布式锁服务，认为分布式锁服务失效，按已获得锁处理。如果节点列表中任何一个节点本身无法访问，按未获得锁处理。
 
     并且内置了一个基于PostgreSQL的分布式锁实现，即tools\distlock。
