@@ -783,6 +783,7 @@ psql执行下一条SQL时就会自动连接到其它Slave上。
 
 
 ## 参考
+- [Pacemaker High Availability for PostgreSQL](https://github.com/ChenHuajun/pha4pgsql)
 - [PostgreSQL流复制高可用的原理与实践](http://www.postgres.cn/news/viewone/1/124)
 - [PgSQL Replicated Cluster](http://clusterlabs.org/wiki/PgSQL_Replicated_Cluster)
 - [Pacemaker+Corosync搭建PostgreSQL集群](http://my.oschina.net/aven92/blog/518928)
