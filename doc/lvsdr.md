@@ -1,9 +1,9 @@
-#基于Pacemkaer Resource Agent的LVS负载均衡
+# 基于Pacemkaer Resource Agent的LVS负载均衡
 
-##前言
+## 前言
 对于有主从状态的集群，实现读负载均衡需要将读请求分发到各Slave上，并且主从发生切换后，要自动调整分发策略。然而，当前主流的LVS监控方案，keepalived或Pacemaker + ldirectord并不能很好的支持这一点，它们需要在发生failover后修改相应的配置文件，这并不是非常方便。为了把LVS更好集成到Pacemaker集群里，将LVS相关的控制操作包装成资源代理，并提供多种灵活的方式动态配置real server。当前只支持工作在LVS的DR模式。
 
-##功能
+## 功能
 1. Director Server和Real Server上内核参数的自动设置
 2. 负载均衡策略等LVS参数的配置
 3. Real Server权重的配置
@@ -20,7 +20,7 @@
     Real Server列表发生变更时，已建立的到非故障Real Server的连接不受影响。
 
 
-##配置参数
+## 配置参数
 * vip
 
 	虚拟服务的VIP.
@@ -69,30 +69,31 @@
 	如果`realserver_get_real_servers_script`或`realserver_check_active_slave_script`不为空，该参数将失效。
 
 
-##安装
+## 安装
 
-##前提需求
+## 前提需求
+
 * Pacemaker
 * Corosync
 * ipvsadm
 
-###获取RA脚本
+### 获取RA脚本
     
     wget https://raw.githubusercontent.com/ChenHuajun/pha4pgsql/master/ra/lvsdr
     wget https://raw.githubusercontent.com/ChenHuajun/pha4pgsql/master/ra/lvsdr-realsvr
 
-###安装RA脚本
+### 安装RA脚本
 
     cp lvsdr lvsdr-realsvr /usr/lib/ocf/resource.d/heartbeat/
     chmod +x  /usr/lib/ocf/resource.d/heartbeat/lvsdr 
     chmod +x  /usr/lib/ocf/resource.d/heartbeat/lvsdr-realsvr
 
 
-##使用示例
+## 使用示例
 
 以下是PostgreSQL主从集群中读负载均衡的配置示例，读请求通过LVS的RR负载均衡策略平均分散到2个Slave节点上。
 
-##示例1:通过资源依赖和节点属性动态设置Real Server列表
+## 示例1:通过资源依赖和节点属性动态设置Real Server列表
 
 配置`lvsdr-realsvr`和每个expgsql的Slave资源部署在一起
 
@@ -208,7 +209,7 @@
 	
 	pcs cluster cib-push pgsql_cfg
 
-###示例2:从Master节点查询Slave节点
+### 示例2:从Master节点查询Slave节点
 
 配值lvsdr的real server列表通过`get_active_slaves`脚本在Master上动态查询Slave节点。
 
@@ -245,7 +246,7 @@
 	recovery_target_timeline = 'latest'
 
 
-###示例3:直接连接Slave检查节点健康状况
+### 示例3:直接连接Slave检查节点健康状况
 
 通过`default_weight`和`weight_of_realservers`指定real server一览，并通过调用`check_active_slave`脚本，依次连接到real server中的每个节点上检查其是否可以连接并且是Slave。
 

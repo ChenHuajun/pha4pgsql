@@ -7,7 +7,7 @@ PostgreSQL的HA方案有很多种，本文演示基于Pacemaker的PostgreSQL一�
 
 * [https://github.com/ChenHuajun/pha4pgsql](https://github.com/ChenHuajun/pha4pgsql)
 
-###目标集群特性
+### 目标集群特性
 1. 秒级自动failover
 2. failover零数据丢失(防脑裂)
 3. 支持在线主从切换
@@ -16,7 +16,7 @@ PostgreSQL的HA方案有很多种，本文演示基于Pacemaker的PostgreSQL一�
 6. 支持动态增加和删除只读节点
 
 
-###环境
+### 环境
 
 - OS:CentOS 7.3
 - 节点1:node1(192.168.0.231)
@@ -675,7 +675,7 @@ Pacemaker已自动修改LVS的real server配置
 	  -> 192.168.0.234:postgres       Route   1      0          0
 
 
-###测试读负载均衡
+### 测试读负载均衡
 在当前的Master节点(node1)上通过读VIP访问postgres,可以看到psql会轮询连接到3个不同的Slave上。
 
 	[root@node1 pha4pgsql]# psql "host=192.168.0.237 port=5432 dbname=postgres user=replication password=replication" -tAc "select pg_postmaster_start_time()"
@@ -769,7 +769,7 @@ psql执行下一条SQL时就会自动连接到其它Slave上。
 	  -> node3:postgres               Route   1      0          0         
 	  -> 192.168.0.234:postgres       Route   0      0          0
 
-####方法2:
+#### 方法2:
 
 通过`default_weight`和`weight_of_realservers`指定real server一览，并通过调用`check_active_slave`脚本，依次连接到real server中的每个节点上检查其是否可以连接并且是Slave。
 
