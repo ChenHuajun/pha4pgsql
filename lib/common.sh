@@ -104,7 +104,7 @@ check_with_timeout()
 
 check_resource_started()
 {
-    for resource in $1
+    for resource in $*
     do
         crm_resource --resource $resource --locate 2>/dev/null | grep "is running on:" >/dev/null
         if [ $? -ne 0 ]; then
@@ -117,7 +117,7 @@ check_resource_started()
 
 check_resource_stoped()
 {
-    for resource in $1
+    for resource in $*
     do
         crm_resource --resource $resource --locate 2>/dev/null | grep "is running on:" >/dev/null
         if [ $? -eq 0 ]; then
