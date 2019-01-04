@@ -735,6 +735,7 @@ pgsql_start() {
 
 #pgsql_promote: Promote PostgreSQL
 pgsql_promote() {
+    local output
     local target
     local rc
     local repl_info_master
@@ -743,7 +744,18 @@ pgsql_promote() {
         ocf_exit_reason "Not in a replication mode."
         return $OCF_ERR_CONFIGURED
     fi
-    
+
+    output=`exec_sql "${CHECK_MS_SQL}"`
+    if [ $? -ne 0 ]; then
+        report_psql_error $rc $loglevel "Can't get PostgreSQL recovery status on promote."
+        return $OCF_ERR_GENERIC
+    fi
+
+    if [ "$output" = "f" ]; then
+        ocf_log info "PostgreSQL is alredy Master. Don't execute promote."
+        return $OCF_SUCCESS
+    fi
+
     #Obtain distributed lock
     if ocf_is_true ${OCF_RESKEY_enable_distlock}; then
         ocf_log info "Obtaining distributed lock."
@@ -765,15 +777,6 @@ pgsql_promote() {
     ocf_log info "Creating $PGSQL_LOCK."
     touch $PGSQL_LOCK
     show_master_baseline
-
-    # create replication slots on master before promotion
-    if use_replication_slot; then
-        create_replication_slots
-        if [ $? -eq $OCF_ERR_GENERIC ]; then
-            ocf_exit_reason "PostgreSQL can't create replication_slot."
-            return $OCF_ERR_GENERIC
-        fi
-    fi
 
     #Restarting PostgreSQL instead of promote when the current node is master before.
     #if ocf_is_true ${OCF_RESKEY_restart_on_promote}; then
@@ -816,6 +819,15 @@ pgsql_promote() {
         done
         ocf_log info "PostgreSQL is promoted."
         update_repl_info || return $OCF_ERR_GENERIC
+    fi
+
+    # create replication slots on master after promotion
+    if use_replication_slot; then
+	create_replication_slots
+	if [ $? -eq $OCF_ERR_GENERIC ]; then
+	    ocf_exit_reason "PostgreSQL can't create replication_slot."
+	    return $OCF_ERR_GENERIC
+	fi
     fi
 
     change_data_status "$NODENAME" "LATEST"
@@ -2057,6 +2069,7 @@ pgsql_validate_all() {
     local check_config_rc
     local rep_mode_string
     local socket_directories
+    local rc
 
     version=`cat $OCF_RESKEY_pgdata/PG_VERSION`
 
@@ -2146,7 +2159,8 @@ pgsql_validate_all() {
         CHECK_MS_SQL="select pg_is_in_recovery()"
         CHECK_SYNCHRONOUS_STANDBY_NAMES_SQL="show synchronous_standby_names"
         ocf_version_cmp "$version" "10"
-        if [ $? -eq 1 ] || [ $? -eq 2 ]; then
+        rc=$?
+        if [ $rc -eq 1 ]||[ $rc -eq 2 ]; then
             CHECK_XLOG_LOC_SQL="select pg_last_wal_replay_lsn(),pg_last_wal_receive_lsn()"
         else
             CHECK_XLOG_LOC_SQL="select pg_last_xlog_replay_location(),pg_last_xlog_receive_location()"
@@ -2203,7 +2217,8 @@ pgsql_validate_all() {
 
     if use_replication_slot; then
         ocf_version_cmp "$version" "9.4"
-        if [ $? -eq 0 -o $? -eq 3 ]; then
+        rc=$?
+        if [ $rc -eq 0 ]||[ $rc -eq 3 ]; then
             ocf_exit_reason "Replication slot needs PostgreSQL 9.4 or higher."
             return $OCF_ERR_CONFIGURED
         fi
@@ -2224,7 +2239,7 @@ pgsql_validate_all() {
 #
 
 check_log_file() {
-    if [ ! -f "$1" ]
+    if [ ! -e "$1" ]
     then
         touch $1 > /dev/null 2>&1
         chown $OCF_RESKEY_pgdba:`getent passwd $OCF_RESKEY_pgdba | cut -d ":" -f 4` $1
