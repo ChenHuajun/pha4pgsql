@@ -110,7 +110,7 @@ PostgreSQL的HA方案有很多种，本文演示基于Pacemaker的PostgreSQL一�
 
 在所有节点执行：
 
-	yum install -y https://yum.postgresql.org/9.6/redhat/rhel-7.3-x86_64/pgdg-centos96-9.6-3.noarch.rpm
+	yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
 
 	yum install -y postgresql96 postgresql96-contrib postgresql96-libs postgresql96-server postgresql96-devel
 
