@@ -240,9 +240,8 @@ PostgreSQL的HA方案有很多种，本文演示基于Pacemaker的PostgreSQL一�
 
 5. 设置环境变量
 
-        export PATH=/opt/pha4pgsql/bin:$PATH
+        	export PATH=/opt/pha4pgsql/bin:$PATH
 		echo 'export PATH=/opt/pha4pgsql/bin:$PATH' >>/root/.bash_profile
-		source ~/.bash_profile
 
 6. 启动集群
 
@@ -612,7 +611,7 @@ Pacemaker已自动修改LVS的real server配置
 
 	将postgresql.conf中的下面一行删掉
 
-		￥vi /pgsql/data/postgresql.conf
+		$vi /pgsql/data/postgresql.conf
 		...
 		#include '/var/lib/pgsql/tmp/rep_mode.conf' # added by pgsql RA
 
