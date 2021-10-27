@@ -22,8 +22,8 @@ PostgreSQL的HA方案有很多种，本文演示基于Pacemaker的PostgreSQL一�
 - 节点1:node1(192.168.0.231)
 - 节点2:node2(192.168.0.232)
 - 节点2:node3(192.168.0.233)
-- writer_vip:192.168.0.236
-- reader_vip:192.168.0.237
+- writer_vip:192.168.0.236 (无任何指向的同网段ip)
+- reader_vip:192.168.0.237 (无任何指向的同网段ip)
 
 ### 依赖软件
 - pacemaker
@@ -110,7 +110,7 @@ PostgreSQL的HA方案有很多种，本文演示基于Pacemaker的PostgreSQL一�
 
 在所有节点执行：
 
-	yum install -y https://yum.postgresql.org/9.6/redhat/rhel-7.3-x86_64/pgdg-centos96-9.6-3.noarch.rpm
+	yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
 
 	yum install -y postgresql96 postgresql96-contrib postgresql96-libs postgresql96-server postgresql96-devel
 
@@ -134,7 +134,7 @@ PostgreSQL的HA方案有很多种，本文演示基于Pacemaker的PostgreSQL一�
 
 3. 修改postgresql.conf  
 
-		listen_addresses = '*'
+		listen_addresses = '*' 
 		wal_level = hot_standby
 		wal_log_hints = on
 		synchronous_commit = on
@@ -148,7 +148,7 @@ PostgreSQL的HA方案有很多种，本文演示基于Pacemaker的PostgreSQL一�
 		restart_after_crash = off
 		hot_standby_feedback = on
 
-    注：设置"`wal_log_hints = on`"可以使用`pg_rewind`修复旧Master。
+    注：1.设置"`wal_log_hints = on`"可以使用`pg_rewind`修复旧Master。
 
 
 4. 修改`pg_hba.conf`
@@ -225,8 +225,11 @@ PostgreSQL的HA方案有很多种，本文演示基于Pacemaker的PostgreSQL一�
 		pgsql_repuser=replication
 		pgsql_reppassord=replication
 
+	注: 
+	1、vip_nic表示当前机器的网卡名称，通过ifconfig可以查到name 
+	2、如果你安装pg 的路径和文档不一致的话，以上路径要核对清楚
 
-4. 安装pha4pgsql
+4. 安装pha4pgsql (用于同步pg数据的工具)
 
 		sh install.sh
 		./setup.sh
@@ -237,7 +240,7 @@ PostgreSQL的HA方案有很多种，本文演示基于Pacemaker的PostgreSQL一�
 
 5. 设置环境变量
 
-        export PATH=/opt/pha4pgsql/bin:$PATH
+        	export PATH=/opt/pha4pgsql/bin:$PATH
 		echo 'export PATH=/opt/pha4pgsql/bin:$PATH' >>/root/.bash_profile
 
 6. 启动集群
@@ -608,7 +611,7 @@ Pacemaker已自动修改LVS的real server配置
 
 	将postgresql.conf中的下面一行删掉
 
-		￥vi /pgsql/data/postgresql.conf
+		$vi /pgsql/data/postgresql.conf
 		...
 		#include '/var/lib/pgsql/tmp/rep_mode.conf' # added by pgsql RA
 
